@@ -4,7 +4,7 @@ import { classificarSite } from "./site";
 import { FonteErro } from "./erro";
 
 // Places API (New) — Text Search. Desligada por padrão (precisa de faturamento no
-// Google Cloud); liga com FONTE_DADOS=google + GOOGLE_PLACES_API_KEY.
+// Google Cloud); liga com NEXT_PUBLIC_FONTE_DADOS=google + GOOGLE_PLACES_API_KEY.
 // https://developers.google.com/maps/documentation/places/web-service/text-search
 const ENDPOINT = "https://places.googleapis.com/v1/places:searchText";
 

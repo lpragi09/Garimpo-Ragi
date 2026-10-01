@@ -1,21 +1,26 @@
-import "server-only";
 import type { BuscaResposta, Empresa } from "../types";
 import { classificarSite, linkGoogleMaps } from "./site";
 import { FonteErro } from "./erro";
 
 // OpenStreetMap: grátis, sem chave e sem cartão.
 // Nominatim acha a cidade; Overpass lista os estabelecimentos dela.
-// Políticas de uso: https://operations.osmfoundation.org/policies/nominatim/
-// (máx. 1 req/s, User-Agent identificando o app).
-const USER_AGENT = "Garimpo/1.0 (+https://garimpo-ragi.vercel.app)";
+//
+// Roda NO NAVEGADOR: os servidores públicos limitam por IP, e os IPs da Vercel são
+// compartilhados com milhares de sites (vivem tomando 504). Do navegador sai pelo IP
+// de quem está usando, e o Referer identifica o app como a política do Nominatim pede:
+// https://operations.osmfoundation.org/policies/nominatim/
 const NOMINATIM = "https://nominatim.openstreetmap.org/search";
 
-// Servidores públicos do Overpass — se um estiver lotado (504/429), tenta o próximo.
+// Servidores públicos do Overpass que aceitam chamada do navegador (CORS).
+// Se um estiver lotado (504/429), tenta o próximo.
 const OVERPASS = [
   "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
   "https://overpass-api.de/api/interpreter",
-  "https://overpass.private.coffee/api/interpreter",
 ];
+
+// Teto por tentativa e no total — a tela nunca fica carregando pra sempre.
+const TEMPO_TENTATIVA = 40_000;
+const TEMPO_TOTAL = 100_000;
 
 // Nicho → etiquetas do OSM (https://wiki.openstreetmap.org/wiki/Map_features).
 // No Overpass vai só chave=valor, que usa índice e responde rápido até em São Paulo.
@@ -57,48 +62,85 @@ function filtroLivre(termo: string): FiltroNicho {
 
 const LIMITE = 500;
 
-type Lugar = { osm_type: string; osm_id: number; boundingbox: [string, string, string, string]; addresstype?: string };
+type Recorte = { area: string; recorte: string };
 
-// Devolve o recorte da busca: a área do município inteiro ou, na falta, o retângulo do lugar.
-async function acharCidade(cidade: string): Promise<{ area: string; recorte: string }> {
-  const url = `${NOMINATIM}?${new URLSearchParams({
-    q: cidade,
-    format: "jsonv2",
-    countrycodes: "br",
-    limit: "5",
-  })}`;
-  const res = await fetch(url, {
-    headers: { "User-Agent": USER_AGENT, "Accept-Language": "pt-BR" },
-    // cidade não muda: guarda o resultado por um dia
-    next: { revalidate: 86400 },
-  });
-  if (!res.ok) throw new FonteErro("Não consegui localizar a cidade agora. Tente de novo em instantes.");
-  const lugares: Lugar[] = await res.json();
+const porArea = (relationId: number): Recorte => ({ area: `area(${3600000000 + relationId})->.a;`, recorte: "(area.a)" });
+const porCaixa = (s: string | number, w: string | number, n: string | number, e: string | number): Recorte => ({
+  area: "",
+  recorte: `(${s},${w},${n},${e})`,
+});
 
+async function pegarJson<T>(url: string): Promise<T | null> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    return res.ok ? ((await res.json()) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Photon (komoot) — geocoder do OSM que aceita chamada do navegador sem frescura.
+type Photon = {
+  features: {
+    properties: { osm_type: string; osm_id: number; osm_key: string; type: string; countrycode?: string; extent?: number[] };
+  }[];
+};
+
+async function viaPhoton(cidade: string): Promise<Recorte | null> {
+  const j = await pegarJson<Photon>(`https://photon.komoot.io/api/?${new URLSearchParams({ q: cidade, limit: "8" })}`);
+  const br = (j?.features ?? []).map((f) => f.properties).filter((p) => p.countrycode === "BR");
+  const municipio = br.find((p) => p.osm_type === "R" && ["city", "town", "village"].includes(p.type));
+  if (municipio) return porArea(municipio.osm_id);
+  const comCaixa = br.find((p) => p.extent?.length === 4 && ["city", "town", "village", "district", "locality"].includes(p.type));
+  if (!comCaixa?.extent) return null;
+  const [w, n, e, s] = comCaixa.extent; // Photon: [minLon, maxLat, maxLon, minLat]
+  return porCaixa(s, w, n, e);
+}
+
+// Nominatim — reserva, caso o Photon esteja fora.
+type Nominatim = { osm_type: string; osm_id: number; boundingbox: [string, string, string, string]; addresstype?: string }[];
+
+async function viaNominatim(cidade: string): Promise<Recorte | null> {
+  const lugares = await pegarJson<Nominatim>(
+    `${NOMINATIM}?${new URLSearchParams({ q: cidade, format: "jsonv2", countrycodes: "br", limit: "5" })}`,
+  );
+  if (!lugares?.length) return null;
   const municipio = lugares.find(
     (l) => l.osm_type === "relation" && ["city", "town", "village", "municipality"].includes(l.addresstype ?? ""),
   );
-  if (municipio) return { area: `area(${3600000000 + municipio.osm_id})->.a;`, recorte: "(area.a)" };
+  if (municipio) return porArea(municipio.osm_id);
+  const [s, n, w, e] = lugares[0].boundingbox;
+  return porCaixa(s, w, n, e);
+}
 
-  const qualquer = lugares[0];
-  if (!qualquer) throw new FonteErro(`Não achei a cidade "${cidade}". Tente "Cidade, UF".`, 404);
-  const [s, n, w, e] = qualquer.boundingbox;
-  return { area: "", recorte: `(${s},${w},${n},${e})` };
+// Devolve o recorte da busca: a área do município inteiro ou, na falta, o retângulo do lugar.
+async function acharCidade(cidade: string): Promise<Recorte> {
+  const achado = (await viaPhoton(cidade)) ?? (await viaNominatim(cidade));
+  if (!achado) throw new FonteErro(`Não achei a cidade "${cidade}". Tente "Cidade, UF" — ex.: Lavras, MG.`, 404);
+  return achado;
 }
 
 type Elemento = { type: string; id: number; tags?: Tags };
 
-async function consultarOverpass(query: string): Promise<Elemento[]> {
+export type Progresso = (mensagem: string) => void;
+
+async function consultarOverpass(query: string, progresso?: Progresso): Promise<Elemento[]> {
+  const inicio = Date.now();
   // Os servidores públicos vivem lotados por alguns segundos: dá duas voltas na lista.
   for (const [i, url] of [...OVERPASS, ...OVERPASS].entries()) {
-    if (i === OVERPASS.length) await new Promise((r) => setTimeout(r, 3000));
+    const resta = TEMPO_TOTAL - (Date.now() - inicio);
+    if (resta < 5_000) break;
+    if (i > 0) {
+      progresso?.("Servidor do mapa ocupado, tentando outro…");
+      await new Promise((r) => setTimeout(r, 1500));
+    }
     try {
       const res = await fetch(url, {
         method: "POST",
-        headers: { "User-Agent": USER_AGENT, "Content-Type": "application/x-www-form-urlencoded" },
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({ data: query }),
         cache: "no-store",
-        signal: AbortSignal.timeout(55_000),
+        signal: AbortSignal.timeout(Math.min(TEMPO_TENTATIVA, resta)),
       });
       if (res.ok) {
         const data: { elements?: Elemento[] } = await res.json();
@@ -149,12 +191,23 @@ function normalizar(el: Elemento, cidade: string, categoria: string): Empresa | 
   };
 }
 
-export async function buscarOsm(nichoId: string, termo: string, cidade: string, categoria: string): Promise<BuscaResposta> {
+export async function buscarOsm(
+  nichoId: string,
+  termo: string,
+  cidade: string,
+  categoria: string,
+  progresso?: Progresso,
+): Promise<BuscaResposta> {
+  progresso?.("Localizando a cidade…");
   const { area, recorte } = await acharCidade(cidade);
+  progresso?.("Consultando o mapa… em cidade grande leva uns 20 segundos.");
   const filtro = FILTROS[nichoId] ?? filtroLivre(termo);
 
   const partes = filtro.tags.map((f) => `nwr${f}${recorte};`).join("");
-  const elementos = await consultarOverpass(`[out:json][timeout:50];${area}(${partes});out center tags ${LIMITE};`);
+  const elementos = await consultarOverpass(
+    `[out:json][timeout:40];${area}(${partes});out center tags ${LIMITE};`,
+    progresso,
+  );
 
   const vistos = new Set<string>();
   const empresas: Empresa[] = [];

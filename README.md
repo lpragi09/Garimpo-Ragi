@@ -26,7 +26,8 @@ O padrão é o OpenStreetMap: o Nominatim acha a cidade e o Overpass lista os es
 (`src/lib/fontes/osm.ts`). Cidades grandes têm bem mais dados que as pequenas, e "sem site" no OSM
 às vezes é só falta de cadastro — por isso cada card tem o link pro Google Maps.
 
-Os servidores públicos do Overpass às vezes ficam lotados; a busca tenta três servidores, duas vezes.
+A consulta roda no navegador (os servidores públicos limitam por IP e os IPs da Vercel vivem
+bloqueados). Quando um servidor está lotado, ela tenta outro, com teto de ~100 s.
 
 ### Google (opcional)
 
@@ -34,7 +35,7 @@ Também dá pra usar a Places API (New) do Google, que traz nota, avaliações e
 mas precisa de faturamento ativo no Google Cloud:
 
 1. Ativar **Places API (New)** e criar uma chave restrita a ela (restrição de aplicativo: Nenhum)
-2. `GOOGLE_PLACES_API_KEY=...` e `FONTE_DADOS=google`
+2. `GOOGLE_PLACES_API_KEY=...` e `NEXT_PUBLIC_FONTE_DADOS=google`
 3. Colocar uma cota diária em Places API (New) → Cotas pra não sair do gratuito
 
 ## Supabase

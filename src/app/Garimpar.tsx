@@ -15,6 +15,7 @@ import {
 import { NICHOS, nichoPorId } from "@/lib/nichos";
 import { MENSAGEM_PADRAO, ehCelular, lerModelo, montarMensagem, salvarModelo } from "@/lib/contato";
 import { idsSalvos, salvarLead } from "@/lib/leads";
+import { buscarOsm } from "@/lib/fontes/osm";
 import type { BuscaResposta, Empresa, Fonte } from "@/lib/types";
 import { EmpresaCard } from "@/components/EmpresaCard";
 import { Marquee } from "@/components/Marquee";
@@ -35,6 +36,21 @@ const FILTROS: { id: Filtro; label: string }[] = [
 
 const CIDADE_KEY = "garimpo:cidade";
 
+// Google só se for ligado de propósito; o padrão é o OpenStreetMap, consultado daqui do navegador.
+const USA_GOOGLE = process.env.NEXT_PUBLIC_FONTE_DADOS === "google";
+
+async function buscarNoServidor(corpo: object): Promise<BuscaResposta> {
+  const res = await fetch("/api/buscar", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(corpo),
+    signal: AbortSignal.timeout(90_000),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.erro ?? "Erro ao buscar.");
+  return data;
+}
+
 export function Garimpar() {
   const [nichoId, setNichoId] = useState("barbearia");
   const [outro, setOutro] = useState("");
@@ -44,6 +60,7 @@ export function Garimpar() {
   const [proxima, setProxima] = useState<string | null>(null);
   const [fonte, setFonte] = useState<Fonte>("osm");
   const [carregando, setCarregando] = useState(false);
+  const [progresso, setProgresso] = useState("");
   const [erro, setErro] = useState<string | null>(null);
   const [filtro, setFiltro] = useState<Filtro>("oportunidades");
   const [ordem, setOrdem] = useState<Ordem>("contato");
@@ -81,21 +98,17 @@ export function Garimpar() {
     }
     setCarregando(true);
     setErro(null);
+    setProgresso("");
     try {
-      const res = await fetch("/api/buscar", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          nicho: alvo.nichoId,
-          termo: alvo.termo,
-          categoria: alvo.nicho,
-          cidade: alvo.cidade,
-          pagina,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.erro ?? "Erro ao buscar.");
-      const r = data as BuscaResposta;
+      const r = USA_GOOGLE
+        ? await buscarNoServidor({
+            nicho: alvo.nichoId,
+            termo: alvo.termo,
+            categoria: alvo.nicho,
+            cidade: alvo.cidade,
+            pagina,
+          })
+        : await buscarOsm(alvo.nichoId, alvo.termo, alvo.cidade, alvo.nicho, setProgresso);
       setBusca(alvo);
       setFonte(r.fonte);
       setProxima(r.proximaPagina);
@@ -108,7 +121,8 @@ export function Garimpar() {
         localStorage.setItem(CIDADE_KEY, alvo.cidade);
       } catch {}
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Erro ao buscar.");
+      const tempo = e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError");
+      setErro(tempo ? "A busca demorou demais. Tente de novo em 1 minuto." : e instanceof Error ? e.message : "Erro ao buscar.");
     } finally {
       setCarregando(false);
     }
@@ -233,7 +247,7 @@ export function Garimpar() {
         {carregando && !proxima && (
           <p role="status" className="mx-auto mt-4 flex max-w-4xl items-center justify-center gap-2 text-sm text-muted">
             <Loader2 className="size-4 animate-spin text-lime" />
-            Consultando o mapa… em cidade grande pode levar até 1 minuto.
+            {progresso || "Buscando…"}
           </p>
         )}
 
