@@ -1,81 +1,48 @@
-"use client";
+import type { Metadata } from "next";
+import { Flame, MessageCircle, Pickaxe, SearchCheck } from "lucide-react";
+import { destinoSeguro } from "@/lib/acesso";
+import { LoginForm } from "./LoginForm";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { Loader2, Pickaxe } from "lucide-react";
-import { getSupabase } from "@/lib/supabase/client";
+export const metadata: Metadata = { title: "Entrar · Garimpo" };
 
-// Sem cadastro aberto: o usuário é criado direto no painel do Supabase
-// (Authentication > Users > Add user) e o "Allow new users to sign up" fica desligado.
-export default function LoginPage() {
-  const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [senha, setSenha] = useState("");
-  const [erro, setErro] = useState<string | null>(null);
-  const [carregando, setCarregando] = useState(false);
-
-  async function entrar(e: React.FormEvent) {
-    e.preventDefault();
-    const supabase = getSupabase();
-    if (!supabase) {
-      router.replace("/");
-      return;
-    }
-    setCarregando(true);
-    setErro(null);
-    const { error } = await supabase.auth.signInWithPassword({ email, password: senha });
-    if (error) {
-      setErro("E-mail ou senha incorretos.");
-      setCarregando(false);
-      return;
-    }
-    router.replace("/");
-    router.refresh();
-  }
+export default async function LoginPage({ searchParams }: PageProps<"/login">) {
+  const { de, erro } = await searchParams;
 
   return (
-    <main className="hero-glow grid flex-1 place-items-center px-4 py-16">
-      <form onSubmit={entrar} className="w-full max-w-sm rounded-3xl border border-line bg-panel p-2">
-        <div className="rounded-2xl bg-panel-2 p-6">
-          <span className="grid size-10 place-items-center rounded-xl bg-lime text-ink">
-            <Pickaxe className="size-5" strokeWidth={2.5} />
+    <main className="hero-glow grid flex-1 place-items-center px-4 py-10">
+      <div className="grid w-full max-w-4xl overflow-hidden rounded-[2rem] border border-line bg-panel p-2 md:grid-cols-[1.1fr_1fr]">
+        {/* lado da marca — some no celular pra o formulário caber sem rolar */}
+        <section className="relative hidden flex-col justify-between overflow-hidden rounded-3xl bg-panel-2 p-8 md:flex">
+          <div className="pointer-events-none absolute -right-24 -top-24 size-72 rounded-full bg-lime/15 blur-3xl" />
+          <span className="flex items-center gap-2">
+            <span className="grid size-9 place-items-center rounded-xl bg-lime text-ink">
+              <Pickaxe className="size-5" strokeWidth={2.5} />
+            </span>
+            <span className="font-display text-xl font-bold italic">Garimpo</span>
           </span>
-          <h1 className="mt-6 font-display text-3xl font-bold italic">Garimpo</h1>
-          <p className="mt-1 text-sm text-muted">Acesso restrito.</p>
 
-          <label className="mt-6 block text-xs text-muted">
-            E-mail
-            <input
-              type="email"
-              required
-              autoComplete="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="mt-1.5 w-full rounded-xl border border-line bg-ink px-4 py-3 text-sm text-cream outline-none focus:border-lime/60"
-            />
-          </label>
-          <label className="mt-3 block text-xs text-muted">
-            Senha
-            <input
-              type="password"
-              required
-              autoComplete="current-password"
-              value={senha}
-              onChange={(e) => setSenha(e.target.value)}
-              className="mt-1.5 w-full rounded-xl border border-line bg-ink px-4 py-3 text-sm text-cream outline-none focus:border-lime/60"
-            />
-          </label>
-          {erro && <p role="alert" className="mt-3 text-sm text-red-300">{erro}</p>}
-        </div>
-        <button
-          type="submit"
-          disabled={carregando}
-          className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl bg-lime py-3.5 font-bold text-ink disabled:opacity-70"
-        >
-          {carregando && <Loader2 className="size-4 animate-spin" />}
-          Entrar
-        </button>
-      </form>
+          <div>
+            <h1 className="font-display text-4xl font-bold leading-tight">
+              Seu próximo cliente <em className="text-lime">ainda não tem site.</em>
+            </h1>
+            <ul className="mt-8 space-y-3 text-sm text-cream/80">
+              <li className="flex items-center gap-3">
+                <SearchCheck className="size-4 text-lime" /> Busca por nicho e cidade no Google Maps
+              </li>
+              <li className="flex items-center gap-3">
+                <Flame className="size-4 text-amber" /> Leads quentes separados automaticamente
+              </li>
+              <li className="flex items-center gap-3">
+                <MessageCircle className="size-4 text-sky" /> Mensagem pronta no WhatsApp
+              </li>
+            </ul>
+          </div>
+
+          <p className="font-mono text-[11px] uppercase tracking-widest text-muted">Acesso restrito · uso próprio</p>
+        </section>
+
+        <LoginForm destino={destinoSeguro(de)} semAcesso={erro === "acesso"} />
+      </div>
     </main>
   );
 }

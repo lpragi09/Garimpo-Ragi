@@ -1,7 +1,10 @@
 import "server-only";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { SUPABASE_KEY, SUPABASE_URL, supabaseLigado } from "./config";
+import { emailPermitido } from "../acesso";
 
 export async function getSupabaseServer() {
   if (!supabaseLigado) return null;
@@ -20,10 +23,20 @@ export async function getSupabaseServer() {
   });
 }
 
-// Quem está logado — ou `null`. Sem Supabase, em dev, devolve um usuário local.
+// Quem está logado e liberado — ou `null`. Sem Supabase, só em dev, devolve um usuário local.
 export async function usuarioAtual() {
+  // sempre por requisição: a página nunca pode ser gerada estática no build
+  await connection();
   const supabase = await getSupabaseServer();
-  if (!supabase) return process.env.NODE_ENV === "production" ? null : { id: "local" };
+  if (!supabase) return process.env.NODE_ENV === "production" ? null : { id: "local", email: "local" };
   const { data } = await supabase.auth.getUser();
-  return data.user;
+  return emailPermitido(data.user?.email) ? data.user : null;
+}
+
+// Segunda trava, dentro de cada página privada: se o proxy falhar ou for
+// pulado por algum motivo, a página em si também não renderiza sem login.
+export async function exigirLogin() {
+  const user = await usuarioAtual();
+  if (!user) redirect("/login");
+  return user;
 }
