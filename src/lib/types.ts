@@ -14,10 +14,12 @@ export type Empresa = {
   aberta: boolean;
 };
 
+export type Fonte = "osm" | "google";
+
 export type BuscaResposta = {
   empresas: Empresa[];
   proximaPagina: string | null;
-  demo: boolean;
+  fonte: Fonte;
 };
 
 export const STATUS = ["novo", "contatado", "negociando", "fechado", "perdido"] as const;

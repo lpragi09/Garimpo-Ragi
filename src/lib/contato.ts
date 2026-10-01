@@ -6,6 +6,14 @@ export function soDigitos(telefone: string) {
   return d;
 }
 
+// "(35) 99876-5432" / "(35) 3821-6855" — independente de como veio da fonte.
+export function formatarTelefone(telefone: string) {
+  const d = soDigitos(telefone);
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return telefone;
+}
+
 // Celular no Brasil: DDD + 9 dígitos começando com 9. Fixo quase nunca tem WhatsApp.
 export function ehCelular(telefone: string) {
   const d = soDigitos(telefone);

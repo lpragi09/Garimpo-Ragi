@@ -27,10 +27,10 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
             </h1>
             <ul className="mt-8 space-y-3 text-sm text-cream/80">
               <li className="flex items-center gap-3">
-                <SearchCheck className="size-4 text-lime" /> Busca por nicho e cidade no Google Maps
+                <SearchCheck className="size-4 text-lime" /> Busca por nicho em qualquer cidade
               </li>
               <li className="flex items-center gap-3">
-                <Flame className="size-4 text-amber" /> Leads quentes separados automaticamente
+                <Flame className="size-4 text-amber" /> Quem está sem site separado na hora
               </li>
               <li className="flex items-center gap-3">
                 <MessageCircle className="size-4 text-sky" /> Mensagem pronta no WhatsApp

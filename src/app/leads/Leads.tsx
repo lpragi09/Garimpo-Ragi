@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Info, Loader2, MapPin, MessageCircle, Phone, Search, Trash2 } from "lucide-react";
 import { atualizarLead, excluirLead, listarLeads, usandoBanco } from "@/lib/leads";
-import { ehCelular, lerModelo, linkWhatsApp, montarMensagem } from "@/lib/contato";
+import { ehCelular, formatarTelefone, lerModelo, linkWhatsApp, montarMensagem } from "@/lib/contato";
 import { STATUS, STATUS_LABEL, type Lead, type Status } from "@/lib/types";
 import { Chip, Nota, PresencaBadge } from "@/components/ui";
 
@@ -247,7 +247,7 @@ function LeadItem({
             href={`tel:${l.telefone.replace(/\D/g, "")}`}
             className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-cream py-2.5 text-sm font-bold text-ink"
           >
-            <Phone className="size-4" /> {l.telefone}
+            <Phone className="size-4" /> {formatarTelefone(l.telefone)}
           </a>
         ) : (
           <span className="flex flex-1 items-center justify-center rounded-xl border border-line py-2.5 text-sm text-muted">

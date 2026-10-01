@@ -1,7 +1,7 @@
 "use client";
 
 import { Bookmark, BookmarkCheck, Flame, MapPin, MessageCircle, Phone } from "lucide-react";
-import { ehCelular, linkWhatsApp, montarMensagem } from "@/lib/contato";
+import { ehCelular, formatarTelefone, linkWhatsApp, montarMensagem } from "@/lib/contato";
 import type { Empresa } from "@/lib/types";
 import { Nota, PresencaBadge, ehQuente } from "./ui";
 
@@ -53,7 +53,7 @@ export function EmpresaCard({ empresa: e, cidade, modelo, salvo, onSalvar, indic
             <Phone className="size-4 shrink-0 text-muted" />
             {e.telefone ? (
               <span className="font-mono text-[13px]">
-                {e.telefone}
+                {formatarTelefone(e.telefone)}
                 <span className="ml-2 text-xs text-muted">{celular ? "celular" : "fixo"}</span>
               </span>
             ) : (
@@ -97,7 +97,8 @@ export function EmpresaCard({ empresa: e, cidade, modelo, salvo, onSalvar, indic
             href={e.mapsUrl}
             target="_blank"
             rel="noreferrer"
-            aria-label="Abrir no Google Maps"
+            aria-label="Conferir no Google Maps"
+            title="Conferir no Google Maps"
             className="grid size-10 place-items-center rounded-xl border border-line text-muted transition-colors hover:text-cream"
           >
             <MapPin className="size-4" />

@@ -19,7 +19,7 @@ export function PresencaBadge({ presenca }: { presenca: Presenca }) {
 }
 
 export function Nota({ nota, avaliacoes }: { nota: number | null; avaliacoes: number }) {
-  if (!nota) return <span className="text-xs text-muted">Sem avaliações</span>;
+  if (!nota) return null;
   return (
     <span className="inline-flex items-center gap-1 text-sm">
       <Star className="size-3.5 fill-amber text-amber" />

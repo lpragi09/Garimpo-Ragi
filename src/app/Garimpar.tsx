@@ -7,20 +7,24 @@ import {
   Loader2,
   MapPin,
   PencilLine,
+  Phone,
   Pickaxe,
   Plus,
   Search,
 } from "lucide-react";
 import { NICHOS, nichoPorId } from "@/lib/nichos";
-import { MENSAGEM_PADRAO, lerModelo, montarMensagem, salvarModelo } from "@/lib/contato";
+import { MENSAGEM_PADRAO, ehCelular, lerModelo, montarMensagem, salvarModelo } from "@/lib/contato";
 import { idsSalvos, salvarLead } from "@/lib/leads";
-import type { BuscaResposta, Empresa } from "@/lib/types";
+import type { BuscaResposta, Empresa, Fonte } from "@/lib/types";
 import { EmpresaCard } from "@/components/EmpresaCard";
 import { Marquee } from "@/components/Marquee";
 import { Chip, ehQuente } from "@/components/ui";
 
 type Filtro = "oportunidades" | "sem_site" | "rede_social" | "todos";
-type Ordem = "avaliacoes" | "nota";
+type Ordem = "contato" | "nome" | "avaliacoes" | "nota";
+
+// celular (dá WhatsApp) > fixo > sem telefone
+const pesoContato = (e: Empresa) => (!e.telefone ? 0 : ehCelular(e.telefone) ? 2 : 1);
 
 const FILTROS: { id: Filtro; label: string }[] = [
   { id: "oportunidades", label: "Oportunidades" },
@@ -35,14 +39,15 @@ export function Garimpar() {
   const [nichoId, setNichoId] = useState("barbearia");
   const [outro, setOutro] = useState("");
   const [cidade, setCidade] = useState("");
-  const [busca, setBusca] = useState<{ termo: string; cidade: string; nicho: string } | null>(null);
+  const [busca, setBusca] = useState<{ nichoId: string; termo: string; cidade: string; nicho: string } | null>(null);
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [proxima, setProxima] = useState<string | null>(null);
-  const [demo, setDemo] = useState(false);
+  const [fonte, setFonte] = useState<Fonte>("osm");
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [filtro, setFiltro] = useState<Filtro>("oportunidades");
-  const [ordem, setOrdem] = useState<Ordem>("avaliacoes");
+  const [ordem, setOrdem] = useState<Ordem>("contato");
+  const [soTelefone, setSoTelefone] = useState(false);
   const [salvos, setSalvos] = useState<Set<string>>(new Set());
   const [modelo, setModelo] = useState(MENSAGEM_PADRAO);
   const [editandoMsg, setEditandoMsg] = useState(false);
@@ -69,7 +74,7 @@ export function Garimpar() {
   const nichoLabel = nichoId === "outro" ? outro.trim() : (nichoPorId(nichoId)?.label ?? "");
 
   async function chamar(pagina?: string) {
-    const alvo = pagina && busca ? busca : { termo, cidade: cidade.trim(), nicho: nichoLabel };
+    const alvo = pagina && busca ? busca : { nichoId, termo, cidade: cidade.trim(), nicho: nichoLabel };
     if (!alvo.termo || !alvo.cidade) {
       setErro("Escolha um nicho e informe a cidade.");
       return;
@@ -80,13 +85,19 @@ export function Garimpar() {
       const res = await fetch("/api/buscar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ termo: alvo.termo, cidade: alvo.cidade, pagina }),
+        body: JSON.stringify({
+          nicho: alvo.nichoId,
+          termo: alvo.termo,
+          categoria: alvo.nicho,
+          cidade: alvo.cidade,
+          pagina,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.erro ?? "Erro ao buscar.");
       const r = data as BuscaResposta;
       setBusca(alvo);
-      setDemo(r.demo);
+      setFonte(r.fonte);
       setProxima(r.proximaPagina);
       setEmpresas((atual) => {
         if (!pagina) return r.empresas;
@@ -124,18 +135,25 @@ export function Garimpar() {
       sem_site: empresas.filter((e) => e.presenca === "sem_site").length,
       rede_social: empresas.filter((e) => e.presenca === "rede_social").length,
       quentes: empresas.filter(ehQuente).length,
+      telefone: empresas.filter((e) => e.telefone).length,
     }),
     [empresas],
   );
 
   const visiveis = useMemo(() => {
-    const lista = empresas.filter((e) =>
-      filtro === "todos" ? true : filtro === "oportunidades" ? e.presenca !== "tem_site" : e.presenca === filtro,
+    const lista = empresas.filter(
+      (e) =>
+        (filtro === "todos" ? true : filtro === "oportunidades" ? e.presenca !== "tem_site" : e.presenca === filtro) &&
+        (!soTelefone || e.telefone),
     );
-    return lista.sort((a, b) =>
-      ordem === "nota" ? (b.nota ?? 0) - (a.nota ?? 0) || b.avaliacoes - a.avaliacoes : b.avaliacoes - a.avaliacoes,
-    );
-  }, [empresas, filtro, ordem]);
+    const ordenar: Record<Ordem, (a: Empresa, b: Empresa) => number> = {
+      contato: (a, b) => pesoContato(b) - pesoContato(a) || b.avaliacoes - a.avaliacoes || a.nome.localeCompare(b.nome),
+      nome: (a, b) => a.nome.localeCompare(b.nome, "pt-BR"),
+      avaliacoes: (a, b) => b.avaliacoes - a.avaliacoes,
+      nota: (a, b) => (b.nota ?? 0) - (a.nota ?? 0) || b.avaliacoes - a.avaliacoes,
+    };
+    return lista.sort(ordenar[ordem]);
+  }, [empresas, filtro, ordem, soTelefone]);
 
   return (
     <main className="flex-1">
@@ -143,15 +161,15 @@ export function Garimpar() {
       <section className="hero-glow relative -mt-20 px-4 pb-16 pt-36 sm:pt-40">
         <div className="mx-auto max-w-4xl text-center">
           <p className="inline-flex items-center gap-2 rounded-full border border-line bg-panel/60 px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-muted">
-            <span className="size-1.5 rounded-full bg-lime" /> Google Places · uso próprio
+            <span className="size-1.5 rounded-full bg-lime" /> OpenStreetMap · grátis · uso próprio
           </p>
           <h1 className="mt-6 font-display text-5xl font-bold leading-[1.02] tracking-tight sm:text-7xl">
             Ache quem ainda <br className="hidden sm:block" />
             <em className="text-lime">não tem site.</em>
           </h1>
           <p className="mx-auto mt-5 max-w-xl text-base text-muted sm:text-lg">
-            Escolha o nicho e a cidade. O Garimpo puxa os negócios do Google Maps e separa quem está
-            sem site ou vivendo só de Instagram.
+            Escolha o nicho e a cidade. O Garimpo puxa os negócios do mapa e separa quem está sem
+            site ou vivendo só de Instagram.
           </p>
         </div>
 
@@ -212,6 +230,13 @@ export function Garimpar() {
           </div>
         </form>
 
+        {carregando && !proxima && (
+          <p role="status" className="mx-auto mt-4 flex max-w-4xl items-center justify-center gap-2 text-sm text-muted">
+            <Loader2 className="size-4 animate-spin text-lime" />
+            Consultando o mapa… em cidade grande pode levar até 1 minuto.
+          </p>
+        )}
+
         {erro && (
           <p role="alert" className="mx-auto mt-4 max-w-4xl rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
             {erro}
@@ -219,7 +244,7 @@ export function Garimpar() {
         )}
       </section>
 
-      <Marquee itens={["Sem site", "Só Instagram", "Landing page", "WhatsApp direto", "Site institucional", "Google Maps"]} />
+      <Marquee itens={["Sem site", "Só Instagram", "Landing page", "WhatsApp direto", "Site institucional", "Qualquer cidade"]} />
 
       {/* ---------- Resultados ---------- */}
       <section className="mx-auto max-w-6xl px-4 py-14">
@@ -234,9 +259,10 @@ export function Garimpar() {
                   {busca.nicho} <span className="italic text-muted">em</span> {busca.cidade}
                 </h2>
               </div>
-              {demo && (
-                <p className="inline-flex items-center gap-1.5 text-xs text-amber">
-                  <Info className="size-3.5" /> Modo demonstração: sem chave do Google, os dados são fictícios.
+              {fonte === "osm" && (
+                <p className="inline-flex max-w-sm items-start gap-1.5 text-xs text-amber sm:text-right">
+                  <Info className="mt-0.5 size-3.5 shrink-0" />
+                  Dados do OpenStreetMap: “sem site” pode ser só falta de cadastro. Confira no Google (ícone do mapa) antes de chamar.
                 </p>
               )}
             </div>
@@ -246,7 +272,11 @@ export function Garimpar() {
               <Numero valor={contagem.total} label="encontrados" />
               <Numero valor={contagem.sem_site} label="sem site" cor="text-lime" />
               <Numero valor={contagem.rede_social} label="só rede social" cor="text-amber" />
-              <Numero valor={contagem.quentes} label="leads quentes" cor="text-violet" />
+              {fonte === "google" ? (
+                <Numero valor={contagem.quentes} label="leads quentes" cor="text-violet" />
+              ) : (
+                <Numero valor={contagem.telefone} label="com telefone" cor="text-violet" />
+              )}
             </div>
 
             <div className="mt-8 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -256,6 +286,9 @@ export function Garimpar() {
                     {f.label}
                   </Chip>
                 ))}
+                <Chip ativo={soTelefone} onClick={() => setSoTelefone((v) => !v)}>
+                  <Phone className="size-4" /> Com telefone
+                </Chip>
               </div>
               <div className="flex gap-2">
                 <label className="flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm">
@@ -266,8 +299,10 @@ export function Garimpar() {
                     onChange={(e) => setOrdem(e.target.value as Ordem)}
                     className="bg-transparent outline-none [&>option]:bg-panel"
                   >
-                    <option value="avaliacoes">Mais avaliações</option>
-                    <option value="nota">Melhor nota</option>
+                    <option value="contato">Com WhatsApp primeiro</option>
+                    <option value="nome">Nome (A–Z)</option>
+                    {fonte === "google" && <option value="avaliacoes">Mais avaliações</option>}
+                    {fonte === "google" && <option value="nota">Melhor nota</option>}
                   </select>
                 </label>
                 <button
@@ -296,7 +331,10 @@ export function Garimpar() {
 
             {visiveis.length === 0 ? (
               <p className="mt-10 rounded-3xl border border-dashed border-line p-10 text-center text-muted">
-                Nenhum resultado com esse filtro. {proxima && "Tente carregar mais resultados."}
+                {empresas.length === 0 && fonte === "osm"
+                  ? "O OpenStreetMap não tem esse nicho cadastrado nessa cidade. Tente outro nicho ou uma cidade maior por perto."
+                  : "Nenhum resultado com esse filtro."}
+                {proxima && " Tente carregar mais resultados."}
               </p>
             ) : (
               <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -402,7 +440,7 @@ function Vazio() {
     <div className="grid gap-3 md:grid-cols-3">
       {[
         { n: "01", t: "Escolha o nicho", d: "Barbearia, dentista, pet shop… ou digite qualquer outro." },
-        { n: "02", t: "Veja quem está sem site", d: "Separamos sem site, só Instagram e quem já tem site." },
+        { n: "02", t: "Veja quem está sem site", d: "Separamos sem site, só Instagram e quem já tem site. Qualquer cidade do Brasil." },
         { n: "03", t: "Chame no WhatsApp", d: "Mensagem pronta com o nome do negócio. Salve como lead." },
       ].map((p) => (
         <div key={p.n} className="rounded-3xl border border-line bg-panel p-2">
