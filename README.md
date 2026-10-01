@@ -22,12 +22,14 @@ Sem Supabase os leads ficam no localStorage (só em desenvolvimento — em produ
 
 ## De onde vêm os dados
 
-O padrão é o OpenStreetMap: o Nominatim acha a cidade e o Overpass lista os estabelecimentos
-(`src/lib/fontes/osm.ts`). Cidades grandes têm bem mais dados que as pequenas, e "sem site" no OSM
-às vezes é só falta de cadastro — por isso cada card tem o link pro Google Maps.
+O padrão é o OpenStreetMap: o Photon acha a cidade e o Nominatim lista os estabelecimentos com
+`[chave=valor]` dentro do retângulo dela, já com telefone e site (`src/lib/fontes/osm.ts`).
+Cidades grandes têm bem mais dados que as pequenas, e "sem site" no OSM às vezes é só falta de
+cadastro — por isso cada card tem o link pro Google Maps.
 
-A consulta roda no navegador (os servidores públicos limitam por IP e os IPs da Vercel vivem
-bloqueados). Quando um servidor está lotado, ela tenta outro, com teto de ~100 s.
+A consulta roda no navegador (1 req/s, como o Nominatim pede). Se o navegador for bloqueado, ela
+tenta a mesma busca pelo servidor (`/api/buscar`). O Overpass foi abandonado: os servidores
+públicos vivem fora do ar ou bloqueando IP.
 
 ### Google (opcional)
 

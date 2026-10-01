@@ -3,155 +3,131 @@ import { classificarSite, linkGoogleMaps } from "./site";
 import { FonteErro } from "./erro";
 
 // OpenStreetMap: grátis, sem chave e sem cartão.
-// Nominatim acha a cidade; Overpass lista os estabelecimentos dela.
+// 1. Photon (komoot) acha a cidade e o retângulo dela.
+// 2. Nominatim lista os estabelecimentos com "[chave=valor]" dentro desse retângulo,
+//    já com telefone e site (extratags). Uma consulta leve por página de 40.
 //
-// Roda NO NAVEGADOR: os servidores públicos limitam por IP, e os IPs da Vercel são
-// compartilhados com milhares de sites (vivem tomando 504). Do navegador sai pelo IP
-// de quem está usando, e o Referer identifica o app como a política do Nominatim pede:
-// https://operations.osmfoundation.org/policies/nominatim/
+// O Overpass foi abandonado: os servidores públicos vivem fora do ar ou bloqueando IP.
+// Política do Nominatim: no máx. 1 req/s e identificação do app
+// (https://operations.osmfoundation.org/policies/nominatim/). No navegador o Referer
+// identifica; no servidor vai o User-Agent.
 const NOMINATIM = "https://nominatim.openstreetmap.org/search";
+const PHOTON = "https://photon.komoot.io/api/";
+const NO_SERVIDOR = typeof window === "undefined";
+const CABECALHOS: HeadersInit = NO_SERVIDOR ? { "User-Agent": "Garimpo/1.0 (+https://garimpo-ragi.vercel.app)" } : {};
 
-// Servidores públicos do Overpass que aceitam chamada do navegador (CORS).
-// Se um estiver lotado (504/429), tenta o próximo.
-const OVERPASS = [
-  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
-  "https://overpass-api.de/api/interpreter",
-];
+const POR_PAGINA = 40; // máximo do Nominatim
+const MAX_PAGINAS = 4; // por etiqueta: até 160 resultados
 
-// Teto por tentativa e no total — a tela nunca fica carregando pra sempre.
-const TEMPO_TENTATIVA = 40_000;
-const TEMPO_TOTAL = 100_000;
-
-// Nicho → etiquetas do OSM (https://wiki.openstreetmap.org/wiki/Map_features).
-// No Overpass vai só chave=valor, que usa índice e responde rápido até em São Paulo.
-// Filtro por nome com regex lá dentro estoura o tempo em cidade grande, então ele roda aqui.
 type Tags = Record<string, string>;
-type FiltroNicho = { tags: string[]; manter?: (t: Tags) => boolean };
+// Cada consulta é um "q" do Nominatim: "[chave=valor]" busca pela etiqueta, texto solto busca pelo nome.
+type FiltroNicho = { consultas: string[]; manter?: (nome: string, t: Tags) => boolean };
 
-const nomeTem = (re: RegExp) => (t: Tags) => re.test(t.name ?? "");
+const etiquetas = (...t: string[]) => t.map((x) => `[${x}]`);
 
+// Nicho → etiquetas do OSM (https://wiki.openstreetmap.org/wiki/Map_features)
 const FILTROS: Record<string, FiltroNicho> = {
+  // em cidade grande as barbearias somem no meio de milhares de salões: busca pelo nome também
   barbearia: {
-    tags: ['["shop"="hairdresser"]', '["shop"="barber"]'],
-    manter: (t) => t.shop === "barber" || /barber/i.test(t.hairdresser ?? "") || /barb/i.test(t.name ?? ""),
+    consultas: ["barbearia", "barber", ...etiquetas("shop=barber", "shop=hairdresser")],
+    manter: (nome, t) => Boolean(t.hairdresser?.includes("barber")) || /barb/i.test(nome),
   },
-  salao: { tags: ['["shop"="hairdresser"]', '["shop"="beauty"]'], manter: (t) => !/barb/i.test(t.name ?? "") },
+  salao: { consultas: etiquetas("shop=hairdresser", "shop=beauty"), manter: (nome) => !/barb/i.test(nome) },
   estetica: {
-    tags: ['["shop"="beauty"]', '["shop"="cosmetics"]'],
-    manter: nomeTem(/est[eé]tica|beleza|spa|depila|sobrancelha|unha|nail|esmalt|beauty/i),
+    consultas: etiquetas("shop=beauty", "shop=cosmetics"),
+    manter: (nome) => /est[eé]tica|beleza|spa|depila|sobrancelha|unha|nail|esmalt|beauty|lash|c[ií]lio/i.test(nome),
   },
-  dentista: { tags: ['["amenity"="dentist"]', '["healthcare"="dentist"]'] },
-  clinica: { tags: ['["amenity"="clinic"]', '["amenity"="doctors"]'] },
-  petshop: { tags: ['["shop"="pet"]', '["amenity"="veterinary"]', '["shop"="pet_grooming"]'] },
-  academia: { tags: ['["leisure"="fitness_centre"]'] },
-  restaurante: { tags: ['["amenity"="restaurant"]'] },
-  padaria: { tags: ['["shop"="bakery"]', '["shop"="pastry"]'] },
-  oficina: { tags: ['["shop"="car_repair"]', '["shop"="motorcycle_repair"]', '["shop"="tyres"]'] },
-  advocacia: { tags: ['["office"="lawyer"]'] },
-  contabilidade: { tags: ['["office"="accountant"]', '["office"="tax_advisor"]'] },
-  imobiliaria: { tags: ['["office"="estate_agent"]'] },
-  construcao: { tags: ['["shop"="hardware"]', '["shop"="doityourself"]', '["trade"="building_supplies"]'] },
-  fotografo: { tags: ['["craft"="photographer"]', '["shop"="photo"]'] },
+  dentista: { consultas: etiquetas("amenity=dentist") },
+  clinica: { consultas: etiquetas("amenity=clinic", "amenity=doctors") },
+  petshop: { consultas: etiquetas("shop=pet", "amenity=veterinary") },
+  academia: { consultas: etiquetas("leisure=fitness_centre") },
+  restaurante: { consultas: etiquetas("amenity=restaurant") },
+  padaria: { consultas: etiquetas("shop=bakery", "shop=pastry") },
+  oficina: { consultas: etiquetas("shop=car_repair", "shop=motorcycle_repair", "shop=tyres") },
+  advocacia: { consultas: etiquetas("office=lawyer") },
+  contabilidade: { consultas: etiquetas("office=accountant", "office=tax_advisor") },
+  imobiliaria: { consultas: etiquetas("office=estate_agent") },
+  construcao: { consultas: etiquetas("shop=hardware", "shop=doityourself") },
+  fotografo: { consultas: etiquetas("craft=photographer", "shop=photo") },
 };
 
-// "Outro": sem etiqueta conhecida, procura pelo nome entre lojas, serviços e escritórios.
-function filtroLivre(termo: string): FiltroNicho {
-  const re = termo.replace(/[.*+?^${}()|[\]\\"]/g, "\\$&");
-  return { tags: ["shop", "amenity", "office", "craft"].map((k) => `["${k}"]["name"~"${re}",i]`) };
-}
-
-const LIMITE = 500;
-
-type Recorte = { area: string; recorte: string };
-
-const porArea = (relationId: number): Recorte => ({ area: `area(${3600000000 + relationId})->.a;`, recorte: "(area.a)" });
-const porCaixa = (s: string | number, w: string | number, n: string | number, e: string | number): Recorte => ({
-  area: "",
-  recorte: `(${s},${w},${n},${e})`,
-});
-
-async function pegarJson<T>(url: string): Promise<T | null> {
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-    return res.ok ? ((await res.json()) as T) : null;
-  } catch {
-    return null;
-  }
-}
-
-// Photon (komoot) — geocoder do OSM que aceita chamada do navegador sem frescura.
-type Photon = {
-  features: {
-    properties: { osm_type: string; osm_id: number; osm_key: string; type: string; countrycode?: string; extent?: number[] };
-  }[];
-};
-
-async function viaPhoton(cidade: string): Promise<Recorte | null> {
-  const j = await pegarJson<Photon>(`https://photon.komoot.io/api/?${new URLSearchParams({ q: cidade, limit: "8" })}`);
-  const br = (j?.features ?? []).map((f) => f.properties).filter((p) => p.countrycode === "BR");
-  const municipio = br.find((p) => p.osm_type === "R" && ["city", "town", "village"].includes(p.type));
-  if (municipio) return porArea(municipio.osm_id);
-  const comCaixa = br.find((p) => p.extent?.length === 4 && ["city", "town", "village", "district", "locality"].includes(p.type));
-  if (!comCaixa?.extent) return null;
-  const [w, n, e, s] = comCaixa.extent; // Photon: [minLon, maxLat, maxLon, minLat]
-  return porCaixa(s, w, n, e);
-}
-
-// Nominatim — reserva, caso o Photon esteja fora.
-type Nominatim = { osm_type: string; osm_id: number; boundingbox: [string, string, string, string]; addresstype?: string }[];
-
-async function viaNominatim(cidade: string): Promise<Recorte | null> {
-  const lugares = await pegarJson<Nominatim>(
-    `${NOMINATIM}?${new URLSearchParams({ q: cidade, format: "jsonv2", countrycodes: "br", limit: "5" })}`,
-  );
-  if (!lugares?.length) return null;
-  const municipio = lugares.find(
-    (l) => l.osm_type === "relation" && ["city", "town", "village", "municipality"].includes(l.addresstype ?? ""),
-  );
-  if (municipio) return porArea(municipio.osm_id);
-  const [s, n, w, e] = lugares[0].boundingbox;
-  return porCaixa(s, w, n, e);
-}
-
-// Devolve o recorte da busca: a área do município inteiro ou, na falta, o retângulo do lugar.
-async function acharCidade(cidade: string): Promise<Recorte> {
-  const achado = (await viaPhoton(cidade)) ?? (await viaNominatim(cidade));
-  if (!achado) throw new FonteErro(`Não achei a cidade "${cidade}". Tente "Cidade, UF" — ex.: Lavras, MG.`, 404);
-  return achado;
-}
-
-type Elemento = { type: string; id: number; tags?: Tags };
+// Categorias do Nominatim que são estabelecimento (rua, bairro, rio… ficam de fora)
+const NEGOCIO = new Set(["shop", "amenity", "office", "craft", "leisure", "healthcare", "tourism"]);
 
 export type Progresso = (mensagem: string) => void;
 
-async function consultarOverpass(query: string, progresso?: Progresso): Promise<Elemento[]> {
-  const inicio = Date.now();
-  // Os servidores públicos vivem lotados por alguns segundos: dá duas voltas na lista.
-  for (const [i, url] of [...OVERPASS, ...OVERPASS].entries()) {
-    const resta = TEMPO_TOTAL - (Date.now() - inicio);
-    if (resta < 5_000) break;
-    if (i > 0) {
-      progresso?.("Servidor do mapa ocupado, tentando outro…");
-      await new Promise((r) => setTimeout(r, 1500));
-    }
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ data: query }),
-        cache: "no-store",
-        signal: AbortSignal.timeout(Math.min(TEMPO_TENTATIVA, resta)),
-      });
-      if (res.ok) {
-        const data: { elements?: Elemento[] } = await res.json();
-        return data.elements ?? [];
-      }
-      console.warn("[osm]", url, res.status);
-    } catch (e) {
-      console.warn("[osm]", url, e instanceof Error ? e.message : e);
-    }
+const espera = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function pegarJson<T>(url: string): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: CABECALHOS, signal: AbortSignal.timeout(20_000) });
+  } catch (e) {
+    // TypeError = rede/CORS bloqueado; deixa quem chamou tentar pelo servidor
+    throw e instanceof TypeError ? new SemAcesso() : e;
   }
-  throw new FonteErro("Os servidores do OpenStreetMap estão lotados agora. Tente de novo em 1 minuto.", 503);
+  if (res.status === 429 || res.status === 403) throw new SemAcesso();
+  if (!res.ok) throw new FonteErro("O mapa não respondeu agora. Tente de novo em instantes.");
+  return res.json() as Promise<T>;
+}
+
+// O navegador não conseguiu falar com o mapa (bloqueio/limite): dá pra tentar pelo servidor.
+export class SemAcesso extends Error {
+  constructor() {
+    super("Sem acesso ao mapa a partir daqui.");
+  }
+}
+
+const semAcento = (s: string) =>
+  s
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .trim();
+
+type Cidade = { nome: string; viewbox: string };
+
+type Photon = {
+  features: {
+    properties: { name: string; osm_type: string; type: string; countrycode?: string; extent?: number[] };
+  }[];
+};
+
+async function acharCidade(cidade: string): Promise<Cidade> {
+  const j = await pegarJson<Photon>(`${PHOTON}?${new URLSearchParams({ q: cidade, limit: "8" })}`);
+  const br = j.features.map((f) => f.properties).filter((p) => p.countrycode === "BR" && p.extent?.length === 4);
+  const achada =
+    br.find((p) => p.osm_type === "R" && ["city", "town", "village"].includes(p.type)) ??
+    br.find((p) => ["city", "town", "village", "district"].includes(p.type));
+  if (!achada?.extent) throw new FonteErro(`Não achei a cidade "${cidade}". Tente "Cidade, UF" — ex.: Lavras, MG.`, 404);
+  // Photon: [minLon, maxLat, maxLon, minLat]; Nominatim viewbox: esquerda,cima,direita,baixo
+  const [w, n, e, s] = achada.extent;
+  return { nome: achada.name, viewbox: `${w},${n},${e},${s}` };
+}
+
+type Lugar = {
+  place_id: number;
+  category: string;
+  osm_type: string;
+  osm_id: number;
+  name: string;
+  extratags?: Tags | null;
+  address?: Record<string, string>;
+};
+
+async function paginaNominatim(q: string, viewbox: string, excluir: number[]): Promise<Lugar[]> {
+  const params = new URLSearchParams({
+    q,
+    viewbox,
+    bounded: "1",
+    countrycodes: "br",
+    format: "jsonv2",
+    extratags: "1",
+    addressdetails: "1",
+    limit: String(POR_PAGINA),
+  });
+  if (excluir.length) params.set("exclude_place_ids", excluir.join(","));
+  return pegarJson<Lugar[]>(`${NOMINATIM}?${params}`);
 }
 
 function primeiroTelefone(t: Tags) {
@@ -169,16 +145,16 @@ function siteOuRede(t: Tags) {
   return null;
 }
 
-function normalizar(el: Elemento, cidade: string, categoria: string): Empresa | null {
-  const t = el.tags ?? {};
-  if (!t.name) return null; // sem nome não dá pra prospectar
-  if (t["disused:shop"] || t["disused:amenity"]) return null;
+function normalizar(l: Lugar, cidade: string, categoria: string): Empresa {
+  const t = l.extratags ?? {};
+  const a = l.address ?? {};
   const site = siteOuRede(t);
-  const rua = [t["addr:street"], t["addr:housenumber"]].filter(Boolean).join(", ");
-  const endereco = [rua, t["addr:suburb"], t["addr:city"]].filter(Boolean).join(" - ") || null;
+  const rua = [a.road, a.house_number].filter(Boolean).join(", ");
+  const local = a.city || a.town || a.village || a.municipality;
+  const endereco = [rua, a.suburb, local].filter(Boolean).join(" - ") || null;
   return {
-    placeId: `osm-${el.type}-${el.id}`,
-    nome: t.name,
+    placeId: `osm-${l.osm_type}-${l.osm_id}`,
+    nome: l.name,
     categoria,
     endereco,
     telefone: primeiroTelefone(t),
@@ -186,7 +162,7 @@ function normalizar(el: Elemento, cidade: string, categoria: string): Empresa | 
     presenca: classificarSite(site),
     nota: null,
     avaliacoes: 0,
-    mapsUrl: linkGoogleMaps(t.name, cidade),
+    mapsUrl: linkGoogleMaps(l.name, cidade),
     aberta: true,
   };
 }
@@ -199,27 +175,42 @@ export async function buscarOsm(
   progresso?: Progresso,
 ): Promise<BuscaResposta> {
   progresso?.("Localizando a cidade…");
-  const { area, recorte } = await acharCidade(cidade);
-  progresso?.("Consultando o mapa… em cidade grande leva uns 20 segundos.");
-  const filtro = FILTROS[nichoId] ?? filtroLivre(termo);
+  const alvo = await acharCidade(cidade);
+  const nomeCidade = semAcento(alvo.nome);
 
-  const partes = filtro.tags.map((f) => `nwr${f}${recorte};`).join("");
-  const elementos = await consultarOverpass(
-    `[out:json][timeout:40];${area}(${partes});out center tags ${LIMITE};`,
-    progresso,
-  );
+  const filtro = FILTROS[nichoId];
+  // "Outro": busca pelo texto, que o Nominatim casa com o nome
+  const consultas = filtro?.consultas ?? [termo];
 
   const vistos = new Set<string>();
   const empresas: Empresa[] = [];
-  for (const el of elementos) {
-    if (filtro.manter && !filtro.manter(el.tags ?? {})) continue;
-    const e = normalizar(el, cidade, categoria);
-    if (!e) continue;
-    // o mesmo negócio às vezes está como ponto e como prédio
-    const chave = `${e.nome.toLowerCase()}|${e.telefone ?? ""}`;
-    if (vistos.has(chave)) continue;
-    vistos.add(chave);
-    empresas.push(e);
+  let primeira = true;
+
+  for (const q of consultas) {
+    const excluir: number[] = [];
+    for (let pagina = 0; pagina < MAX_PAGINAS; pagina++) {
+      if (!primeira) await espera(1100); // 1 req/s, como o Nominatim pede
+      primeira = false;
+      progresso?.(empresas.length ? `Buscando… ${empresas.length} encontrados até agora` : "Buscando no mapa…");
+
+      const lugares = await paginaNominatim(q, alvo.viewbox, excluir);
+      for (const l of lugares) {
+        excluir.push(l.place_id);
+        // busca por texto também acha rua e bairro com o mesmo nome: só negócio passa
+        if (!l.name || !NEGOCIO.has(l.category)) continue;
+        // o retângulo da cidade pega um pedaço das vizinhas: fica só quem é da cidade
+        const local = l.address?.city || l.address?.town || l.address?.village || l.address?.municipality;
+        if (local && semAcento(local) !== nomeCidade) continue;
+        if (filtro?.manter && !filtro.manter(l.name, l.extratags ?? {})) continue;
+        const e = normalizar(l, cidade, categoria);
+        const chave = `${e.nome.toLowerCase()}|${e.telefone ?? ""}`;
+        if (vistos.has(chave)) continue;
+        vistos.add(chave);
+        empresas.push(e);
+      }
+      if (lugares.length < POR_PAGINA) break;
+    }
   }
+
   return { empresas, proximaPagina: null, fonte: "osm" };
 }

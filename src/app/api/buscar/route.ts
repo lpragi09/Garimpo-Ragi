@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { buscarEmpresas, FonteErro } from "@/lib/fontes";
 import { usuarioAtual } from "@/lib/supabase/server";
 
-// o OpenStreetMap pode levar 20–60 s em cidade grande (e tenta mais de um servidor)
-export const maxDuration = 180;
+// reserva do navegador: o Nominatim pede 1 req/s, então várias páginas levam alguns segundos
+export const maxDuration = 60;
 
 export async function POST(request: Request) {
   // O proxy já barra quem não está logado; aqui é a segunda trava.

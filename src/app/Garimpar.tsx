@@ -15,7 +15,7 @@ import {
 import { NICHOS, nichoPorId } from "@/lib/nichos";
 import { MENSAGEM_PADRAO, ehCelular, lerModelo, montarMensagem, salvarModelo } from "@/lib/contato";
 import { idsSalvos, salvarLead } from "@/lib/leads";
-import { buscarOsm } from "@/lib/fontes/osm";
+import { SemAcesso, buscarOsm } from "@/lib/fontes/osm";
 import type { BuscaResposta, Empresa, Fonte } from "@/lib/types";
 import { EmpresaCard } from "@/components/EmpresaCard";
 import { Marquee } from "@/components/Marquee";
@@ -108,7 +108,12 @@ export function Garimpar() {
             cidade: alvo.cidade,
             pagina,
           })
-        : await buscarOsm(alvo.nichoId, alvo.termo, alvo.cidade, alvo.nicho, setProgresso);
+        : await buscarOsm(alvo.nichoId, alvo.termo, alvo.cidade, alvo.nicho, setProgresso).catch((e) => {
+            // navegador bloqueado pelo mapa (limite/extensão/rede): tenta a mesma busca pelo servidor
+            if (!(e instanceof SemAcesso)) throw e;
+            setProgresso("Tentando pelo servidor…");
+            return buscarNoServidor({ nicho: alvo.nichoId, termo: alvo.termo, categoria: alvo.nicho, cidade: alvo.cidade });
+          });
       setBusca(alvo);
       setFonte(r.fonte);
       setProxima(r.proximaPagina);
