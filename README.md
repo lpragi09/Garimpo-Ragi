@@ -1,36 +1,40 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Garimpo
 
-## Getting Started
+Ferramenta pessoal pra achar negócios sem site no Google Maps e oferecer landing page / site.
 
-First, run the development server:
+- Busca por nicho + cidade usando a Places API (New) do Google
+- Separa quem está **sem site**, **só com rede social** (Instagram, iFood, Linktree…) e quem já tem site
+- Marca como "quente" quem não tem site mas tem movimento (30+ avaliações e nota 4,2+)
+- Botão de WhatsApp com mensagem pronta (editável) quando o número é celular
+- Lista de leads com status (novo → contatado → negociando → fechado/perdido) e anotações
+
+Next.js 16 · Tailwind 4 · Supabase · lucide-react · Vercel Analytics/Speed Insights
+
+## Rodando
 
 ```bash
+cp .env.example .env.local
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Sem `GOOGLE_PLACES_API_KEY` a busca devolve dados fictícios. Sem Supabase os leads ficam no
+localStorage (só em desenvolvimento — em produção o app não abre sem Supabase).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Google
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. console.cloud.google.com → criar projeto → ativar **Places API (New)** (precisa de faturamento ativo)
+2. Credenciais → criar chave de API → restringir à Places API (New)
+3. Colocar em `GOOGLE_PLACES_API_KEY`. A chave só é usada no servidor (`/api/buscar`).
 
-## Learn More
+Cada página de 20 resultados é uma chamada de Text Search no SKU Enterprise (por causa do
+`websiteUri` e do telefone). Vale criar um alerta de orçamento no Google Cloud.
 
-To learn more about Next.js, take a look at the following resources:
+## Supabase
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. Rodar `supabase/migrations/001_leads.sql` no SQL Editor
+2. Authentication → Sign In / Providers → desligar "Allow new users to sign up"
+3. Authentication → Users → Add user (seu e-mail e senha)
+4. Preencher `NEXT_PUBLIC_SUPABASE_URL` e `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Tudo fica atrás do login (`src/proxy.ts`) e a tabela `leads` tem RLS: cada usuário só vê os próprios.

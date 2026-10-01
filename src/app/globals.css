@@ -1,26 +1,73 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/*
+  Paleta tirada das referências:
+  - fundo quase preto e cartões em camadas (skiper-ui / uiverse)
+  - creme + verde neon do GSAP como texto e destaque
+*/
+@theme {
+  --color-ink: #080808;
+  --color-panel: #111111;
+  --color-panel-2: #1a1a1a;
+  --color-line: rgb(255 255 255 / 0.08);
+  --color-cream: #fffce1;
+  --color-muted: #9a998a;
+  --color-lime: #0ae448;
+  --color-lime-soft: #abff84;
+  --color-amber: #ff8709;
+  --color-sky: #00bae2;
+  --color-violet: #9d95ff;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --font-sans: var(--font-inter);
+  --font-display: var(--font-playfair);
+  --font-mono: var(--font-mono-face);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  --animate-marquee: marquee 28s linear infinite;
+  --animate-rise: rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+
+  @keyframes marquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(14px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 }
 
+html {
+  color-scheme: dark;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-ink);
+  color: var(--color-cream);
+}
+
+/* brilho suave atrás do hero, igual ao da uiverse */
+.hero-glow {
+  background:
+    radial-gradient(60% 50% at 50% 0%, rgb(10 228 72 / 0.10), transparent 70%),
+    radial-gradient(40% 40% at 80% 10%, rgb(157 149 255 / 0.08), transparent 70%);
+}
+
+::selection {
+  background: var(--color-lime);
+  color: var(--color-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* fileiras de chips roláveis no celular, sem a barra aparecendo */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
