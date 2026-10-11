@@ -6,6 +6,29 @@ function mensagemPorStatus(status: number): string {
   return "Erro ao buscar.";
 }
 
+// Junta vários sinais num só: aborta quando qualquer um abortar, levando o motivo dele.
+// Usa AbortSignal.any quando existe; navegadores antigos (Safari < 17.4, Chrome < 116,
+// Firefox < 124) não têm, então liga os eventos num AbortController novo.
+export function combinarSinais(...sinais: (AbortSignal | undefined)[]): AbortSignal {
+  const validos = sinais.filter((s): s is AbortSignal => Boolean(s));
+  if (validos.length === 1) return validos[0];
+  if (typeof AbortSignal.any === "function") return AbortSignal.any(validos);
+
+  const ctrl = new AbortController();
+  const jaAbortado = validos.find((s) => s.aborted);
+  if (jaAbortado) {
+    ctrl.abort(jaAbortado.reason);
+    return ctrl.signal;
+  }
+  const soltar = () => validos.forEach((s) => s.removeEventListener("abort", aoAbortar));
+  function aoAbortar(this: AbortSignal) {
+    soltar();
+    ctrl.abort(this.reason);
+  }
+  validos.forEach((s) => s.addEventListener("abort", aoAbortar));
+  return ctrl.signal;
+}
+
 export async function lerRespostaJson<T>(res: Response): Promise<T> {
   const texto = await res.text();
   let data: unknown;

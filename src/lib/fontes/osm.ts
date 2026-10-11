@@ -1,6 +1,8 @@
 import type { BuscaResposta, Empresa } from "../types";
 import { classificarSite, linkGoogleMaps } from "./site";
 import { FonteErro } from "./erro";
+import { criarRitmo } from "./ritmo";
+import { combinarSinais } from "../http";
 
 // OpenStreetMap: grátis, sem chave e sem cartão.
 // 1. Photon (komoot) acha a cidade e o retângulo dela.
@@ -18,6 +20,16 @@ const CABECALHOS: HeadersInit = NO_SERVIDOR ? { "User-Agent": "Garimpo/1.0 (+htt
 
 const POR_PAGINA = 40; // máximo do Nominatim
 const MAX_PAGINAS = 4; // por etiqueta: até 160 resultados
+// Etiquetas genéricas que depois passam pelo filtro de nome (`manter`): a maior parte dos
+// resultados é descartada, então páginas extras custam caro e rendem pouco.
+const GENERICAS = new Set(["[shop=hairdresser]", "[shop=beauty]"]);
+const MAX_PAGINAS_GENERICA = 2;
+// A lista de exclusão vai na URL: só os ids mais recentes, pra não estourar o tamanho.
+const MAX_EXCLUIR = 150;
+
+// 1 req/s medido entre os INÍCIOS das requisições (política do Nominatim). Fica no módulo
+// pra valer também entre buscas seguidas (uma cancelada e outra logo em seguida).
+const ritmoNominatim = criarRitmo(1100);
 
 type Tags = Record<string, string>;
 // Cada consulta é um "q" do Nominatim: "[chave=valor]" busca pela etiqueta, texto solto busca pelo nome.
@@ -56,12 +68,17 @@ const NEGOCIO = new Set(["shop", "amenity", "office", "craft", "leisure", "healt
 
 export type Progresso = (mensagem: string) => void;
 
-const espera = (ms: number) => new Promise((r) => setTimeout(r, ms));
+export type OpcoesBusca = {
+  progresso?: Progresso;
+  // recebe a lista acumulada (cópia) depois de cada página: dá pra mostrar ao vivo
+  onParcial?: (empresas: Empresa[]) => void;
+  sinal?: AbortSignal;
+};
 
-async function pegarJson<T>(url: string): Promise<T> {
+async function pegarJson<T>(url: string, sinal?: AbortSignal): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(url, { headers: CABECALHOS, signal: AbortSignal.timeout(20_000) });
+    res = await fetch(url, { headers: CABECALHOS, signal: combinarSinais(sinal, AbortSignal.timeout(20_000)) });
   } catch (e) {
     // TypeError = rede/CORS bloqueado; deixa quem chamou tentar pelo servidor
     throw e instanceof TypeError ? new SemAcesso() : e;
@@ -99,8 +116,8 @@ type Photon = {
   }[];
 };
 
-async function acharCidade(cidade: string): Promise<Cidade> {
-  const j = await pegarJson<Photon>(`${PHOTON}?${new URLSearchParams({ q: cidade, limit: "8" })}`);
+async function acharCidade(cidade: string, sinal?: AbortSignal): Promise<Cidade> {
+  const j = await pegarJson<Photon>(`${PHOTON}?${new URLSearchParams({ q: cidade, limit: "8" })}`, sinal);
   const br = j.features.map((f) => f.properties).filter((p) => p.countrycode === "BR" && p.extent?.length === 4);
   const achada =
     br.find((p) => p.osm_type === "R" && ["city", "town", "village"].includes(p.type)) ??
@@ -121,7 +138,7 @@ type Lugar = {
   address?: Record<string, string>;
 };
 
-async function paginaNominatim(q: string, viewbox: string, excluir: number[]): Promise<Lugar[]> {
+async function paginaNominatim(q: string, viewbox: string, excluir: number[], sinal?: AbortSignal): Promise<Lugar[]> {
   const params = new URLSearchParams({
     q,
     viewbox,
@@ -133,7 +150,7 @@ async function paginaNominatim(q: string, viewbox: string, excluir: number[]): P
     limit: String(POR_PAGINA),
   });
   if (excluir.length) params.set("exclude_place_ids", excluir.join(","));
-  return pegarJson<Lugar[]>(`${NOMINATIM}?${params}`);
+  return pegarJson<Lugar[]>(`${NOMINATIM}?${params}`, sinal);
 }
 
 function primeiroTelefone(t: Tags) {
@@ -178,10 +195,12 @@ export async function buscarOsm(
   termo: string,
   cidade: string,
   categoria: string,
-  progresso?: Progresso,
+  opcoes: OpcoesBusca = {},
 ): Promise<BuscaResposta> {
+  const { progresso, onParcial, sinal } = opcoes;
+  sinal?.throwIfAborted();
   progresso?.("Localizando a cidade…");
-  const alvo = await acharCidade(cidade);
+  const alvo = await acharCidade(cidade, sinal);
   const nomeCidade = semAcento(alvo.nome);
 
   const filtro = FILTROS[nichoId];
@@ -190,18 +209,20 @@ export async function buscarOsm(
 
   const vistos = new Set<string>();
   const empresas: Empresa[] = [];
-  let primeira = true;
+  // compartilhada entre as consultas: o que "barbearia" já trouxe não volta em "[shop=barber]"
+  let excluir: number[] = [];
 
   for (const q of consultas) {
-    const excluir: number[] = [];
-    for (let pagina = 0; pagina < MAX_PAGINAS; pagina++) {
-      if (!primeira) await espera(1100); // 1 req/s, como o Nominatim pede
-      primeira = false;
+    const maxPaginas = filtro?.manter && GENERICAS.has(q) ? MAX_PAGINAS_GENERICA : MAX_PAGINAS;
+    for (let pagina = 0; pagina < maxPaginas; pagina++) {
+      sinal?.throwIfAborted();
+      await ritmoNominatim();
+      sinal?.throwIfAborted();
       progresso?.(empresas.length ? `Buscando… ${empresas.length} encontrados até agora` : "Buscando no mapa…");
 
-      const lugares = await paginaNominatim(q, alvo.viewbox, excluir);
+      const lugares = await paginaNominatim(q, alvo.viewbox, excluir, sinal);
+      excluir = [...excluir, ...lugares.map((l) => l.place_id)].slice(-MAX_EXCLUIR);
       for (const l of lugares) {
-        excluir.push(l.place_id);
         // busca por texto também acha rua e bairro com o mesmo nome: só negócio passa
         if (!l.name || !NEGOCIO.has(l.category)) continue;
         // o retângulo da cidade pega um pedaço das vizinhas: fica só quem é da cidade
@@ -215,6 +236,7 @@ export async function buscarOsm(
         vistos.add(chave);
         empresas.push(e);
       }
+      onParcial?.([...empresas]);
       if (lugares.length < POR_PAGINA) break;
     }
   }
