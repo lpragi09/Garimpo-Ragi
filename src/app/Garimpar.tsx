@@ -310,7 +310,7 @@ export function Garimpar() {
             </div>
 
             {/* filtros: no desktop grudam logo abaixo da pílula da navbar (76 px + folga) */}
-            <div className="z-30 -mx-2 mt-8 flex flex-col gap-3 rounded-2xl px-2 py-2 lg:sticky lg:top-[5.25rem] lg:border lg:border-line lg:bg-ink/85 lg:backdrop-blur-xl">
+            <div className="z-30 -mx-2 mt-8 flex flex-col gap-3 rounded-2xl px-2 py-2 lg:sticky lg:top-[5.25rem] lg:border lg:border-line lg:bg-ink/95">
               <div className="no-scrollbar -mx-1 flex min-w-0 gap-2 overflow-x-auto px-1 pb-1 lg:flex-wrap lg:overflow-visible lg:pb-0">
                 {FILTROS.map((f) => (
                   <Chip key={f.id} ativo={filtro === f.id} onClick={() => setFiltro(f.id)}>

@@ -7,6 +7,8 @@ import { Color, Mesh, Program, Renderer, Triangle } from "ogl";
 const CORES = ["#0ae448", "#9d95ff", "#00bae2"] as const;
 // Quanto menor, mais lenta. A aurora deve "respirar", não dançar.
 const VELOCIDADE = 0.35;
+// ~30 quadros/s (margem pra não cair pra 20 em telas de 60 Hz)
+const INTERVALO_MS = 1000 / 32;
 
 const VERTICE = /* glsl */ `
 attribute vec2 uv;
@@ -121,7 +123,7 @@ export default function Aurora({
     try {
       // pode lançar (GPU desligada, modo privado...) ou vir sem contexto
       renderer = new Renderer({
-        dpr: Math.min(window.devicePixelRatio || 1, 1.5),
+        dpr: 0.5,
         alpha: true,
         premultipliedAlpha: true,
         antialias: false,
@@ -175,12 +177,14 @@ export default function Aurora({
 
     const desenhar = (agora: number) => {
       if (perdido) return;
+      quadro = requestAnimationFrame(desenhar);
+      // a aurora é lenta: 30 quadros/s bastam e liberam metade da GPU
+      if (agora - ultimo < INTERVALO_MS) return;
       // conta só o tempo em que estava rodando, sem "pulo" ao voltar
       tempoAcumulado += Math.min(agora - ultimo, 100);
       ultimo = agora;
       programa.uniforms.uTempo.value = (tempoAcumulado / 1000) * VELOCIDADE;
       r.render({ scene: malha });
-      quadro = requestAnimationFrame(desenhar);
     };
 
     const atualizar = () => {

@@ -39,7 +39,7 @@ export function Navbar() {
         </div>
 
         {/* Desktop/tablet: pílula flutuante de vidro com os links */}
-        <nav className="relative mx-auto hidden h-16 max-w-3xl items-center justify-between rounded-2xl px-4 vidro md:flex">
+        <nav className="relative mx-auto hidden h-16 max-w-3xl items-center justify-between rounded-2xl bg-panel/90 px-4 vidro md:flex">
           <Link href="/" className="flex items-center gap-2">
             <PastilhaCromada icon={Pickaxe} tamanho="sm" />
             <span className="font-display text-lg font-bold italic tracking-tight">Garimpo</span>
