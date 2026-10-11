@@ -72,10 +72,16 @@ async function pegarJson<T>(url: string): Promise<T> {
 }
 
 // O navegador não conseguiu falar com o mapa (bloqueio/limite): dá pra tentar pelo servidor.
-export class SemAcesso extends Error {
+export class SemAcesso extends FonteErro {
   constructor() {
-    super("Sem acesso ao mapa a partir daqui.");
+    super("O mapa limitou as consultas. Tente de novo em 1 minuto.", 503);
   }
+}
+
+// Chave de deduplicação: telefone identifica melhor, mas sem ele dois negócios diferentes
+// com o mesmo nome (comum em rede/franquia) não podem colidir — por isso cai no placeId.
+export function chaveEmpresa(e: Empresa): string {
+  return e.telefone ? `${e.nome.toLowerCase()}|${e.telefone}` : e.placeId;
 }
 
 const semAcento = (s: string) =>
@@ -85,7 +91,7 @@ const semAcento = (s: string) =>
     .toLowerCase()
     .trim();
 
-type Cidade = { nome: string; viewbox: string };
+type Cidade = { nome: string; viewbox: string; tipo: string };
 
 type Photon = {
   features: {
@@ -102,7 +108,7 @@ async function acharCidade(cidade: string): Promise<Cidade> {
   if (!achada?.extent) throw new FonteErro(`Não achei a cidade "${cidade}". Tente "Cidade, UF" — ex.: Lavras, MG.`, 404);
   // Photon: [minLon, maxLat, maxLon, minLat]; Nominatim viewbox: esquerda,cima,direita,baixo
   const [w, n, e, s] = achada.extent;
-  return { nome: achada.name, viewbox: `${w},${n},${e},${s}` };
+  return { nome: achada.name, viewbox: `${w},${n},${e},${s}`, tipo: achada.type };
 }
 
 type Lugar = {
@@ -199,11 +205,12 @@ export async function buscarOsm(
         // busca por texto também acha rua e bairro com o mesmo nome: só negócio passa
         if (!l.name || !NEGOCIO.has(l.category)) continue;
         // o retângulo da cidade pega um pedaço das vizinhas: fica só quem é da cidade
+        // (quando a cidade buscada é um "district", o próprio Nominatim já devolve o endereço do distrito)
         const local = l.address?.city || l.address?.town || l.address?.village || l.address?.municipality;
-        if (local && semAcento(local) !== nomeCidade) continue;
+        if (local && alvo.tipo !== "district" && semAcento(local) !== nomeCidade) continue;
         if (filtro?.manter && !filtro.manter(l.name, l.extratags ?? {})) continue;
         const e = normalizar(l, cidade, categoria);
-        const chave = `${e.nome.toLowerCase()}|${e.telefone ?? ""}`;
+        const chave = chaveEmpresa(e);
         if (vistos.has(chave)) continue;
         vistos.add(chave);
         empresas.push(e);

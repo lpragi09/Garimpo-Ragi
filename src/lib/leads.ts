@@ -54,8 +54,10 @@ export async function salvarLead(e: Empresa, contexto: { nicho: string; cidade: 
   };
   const sb = getSupabase();
   if (!sb) {
+    const leads = lerLocal();
+    // já existe lead com esse place_id: não sobrescreve (igual ao ignoreDuplicates do Supabase)
+    if (leads.some((l) => l.place_id === e.placeId)) return;
     const agora = new Date().toISOString();
-    const leads = lerLocal().filter((l) => l.place_id !== e.placeId);
     gravarLocal([
       { ...linha, id: crypto.randomUUID(), status: "novo", observacao: null, created_at: agora, updated_at: agora },
       ...leads,
