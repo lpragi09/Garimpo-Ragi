@@ -25,10 +25,17 @@ export const MENSAGEM_PADRAO =
   "Eu crio sites e landing pages para negócios de {cidade}, com WhatsApp direto e aparecendo melhor no Google. " +
   "Posso te mandar um exemplo de como ficaria o da {nome}?";
 
-export function montarMensagem(modelo: string, dados: { nome: string; cidade?: string | null }) {
+export function montarMensagem(
+  modelo: string,
+  dados: { nome: string; cidade?: string | null; nicho?: string | null },
+) {
+  const cidade = dados.cidade?.trim() || "sua cidade";
+  const nicho = dados.nicho?.trim() ? dados.nicho.trim().toLowerCase() : "seu negócio";
+  // Função como substituição: evita que "$" no nome/cidade seja lido como padrão especial do replaceAll.
   return modelo
-    .replaceAll("{nome}", dados.nome)
-    .replaceAll("{cidade}", dados.cidade?.trim() || "sua cidade");
+    .replaceAll("{nome}", () => dados.nome)
+    .replaceAll("{cidade}", () => cidade)
+    .replaceAll("{nicho}", () => nicho);
 }
 
 export function linkWhatsApp(telefone: string, mensagem: string) {

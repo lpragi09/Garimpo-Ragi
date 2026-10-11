@@ -68,6 +68,7 @@ export async function buscarGoogle(chave: string, termo: string, cidade: string,
       ...(pageToken ? { pageToken } : {}),
     }),
     cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (!res.ok) {

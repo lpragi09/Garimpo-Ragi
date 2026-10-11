@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
@@ -24,14 +25,15 @@ export async function getSupabaseServer() {
 }
 
 // Quem está logado e liberado — ou `null`. Sem Supabase, só em dev, devolve um usuário local.
-export async function usuarioAtual() {
+// `cache` só dedupe dentro da mesma requisição (cada request novo começa limpo).
+export const usuarioAtual = cache(async () => {
   // sempre por requisição: a página nunca pode ser gerada estática no build
   await connection();
   const supabase = await getSupabaseServer();
   if (!supabase) return process.env.NODE_ENV === "production" ? null : { id: "local", email: "local" };
   const { data } = await supabase.auth.getUser();
   return emailPermitido(data.user?.email) ? data.user : null;
-}
+});
 
 // Segunda trava, dentro de cada página privada: se o proxy falhar ou for
 // pulado por algum motivo, a página em si também não renderiza sem login.

@@ -1,31 +1,41 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowDownWideNarrow,
+  BookmarkCheck,
   Info,
   Loader2,
   MapPin,
+  MessageCircle,
   PencilLine,
   Phone,
   Pickaxe,
   Plus,
+  ScanSearch,
   Search,
+  Target,
+  type LucideIcon,
 } from "lucide-react";
 import { NICHOS, nichoPorId } from "@/lib/nichos";
-import { MENSAGEM_PADRAO, ehCelular, lerModelo, montarMensagem, salvarModelo } from "@/lib/contato";
+import { MENSAGEM_PADRAO, lerModelo, montarMensagem, salvarModelo } from "@/lib/contato";
+import { pesoContato, semSalvos } from "@/lib/filtros";
 import { idsSalvos, salvarLead } from "@/lib/leads";
-import { SemAcesso, buscarOsm } from "@/lib/fontes/osm";
-import type { BuscaResposta, Empresa, Fonte } from "@/lib/types";
+import type { Empresa } from "@/lib/types";
 import { EmpresaCard } from "@/components/EmpresaCard";
 import { Marquee } from "@/components/Marquee";
 import { Chip, ehQuente } from "@/components/ui";
+import { AuroraFundo } from "@/components/fx/AuroraFundo";
+import { BotaoLuz } from "@/components/fx/BotaoLuz";
+import { Contador } from "@/components/fx/Contador";
+import { PastilhaCromada } from "@/components/fx/PastilhaCromada";
+import { SpotlightCard } from "@/components/fx/SpotlightCard";
+import { TextoDecrypt } from "@/components/fx/TextoDecrypt";
+import { useBusca } from "./useBusca";
+import { mostrarVazio } from "./estadoBusca";
 
 type Filtro = "oportunidades" | "sem_site" | "rede_social" | "todos";
 type Ordem = "contato" | "nome" | "avaliacoes" | "nota";
-
-// celular (dá WhatsApp) > fixo > sem telefone
-const pesoContato = (e: Empresa) => (!e.telefone ? 0 : ehCelular(e.telefone) ? 2 : 1);
 
 const FILTROS: { id: Filtro; label: string }[] = [
   { id: "oportunidades", label: "Oportunidades" },
@@ -34,38 +44,35 @@ const FILTROS: { id: Filtro; label: string }[] = [
   { id: "todos", label: "Todos" },
 ];
 
+const ORDENAR: Record<Exclude<Ordem, "contato">, (a: Empresa, b: Empresa) => number> = {
+  nome: (a, b) => a.nome.localeCompare(b.nome, "pt-BR"),
+  avaliacoes: (a, b) => b.avaliacoes - a.avaliacoes,
+  nota: (a, b) => (b.nota ?? 0) - (a.nota ?? 0) || b.avaliacoes - a.avaliacoes,
+};
+
 const CIDADE_KEY = "garimpo:cidade";
-
-// Google só se for ligado de propósito; o padrão é o OpenStreetMap, consultado daqui do navegador.
-const USA_GOOGLE = process.env.NEXT_PUBLIC_FONTE_DADOS === "google";
-
-async function buscarNoServidor(corpo: object): Promise<BuscaResposta> {
-  const res = await fetch("/api/buscar", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(corpo),
-    signal: AbortSignal.timeout(90_000),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.erro ?? "Erro ao buscar.");
-  return data;
-}
 
 export function Garimpar() {
   const [nichoId, setNichoId] = useState("barbearia");
   const [outro, setOutro] = useState("");
   const [cidade, setCidade] = useState("");
-  const [busca, setBusca] = useState<{ nichoId: string; termo: string; cidade: string; nicho: string } | null>(null);
-  const [empresas, setEmpresas] = useState<Empresa[]>([]);
-  const [proxima, setProxima] = useState<string | null>(null);
-  const [fonte, setFonte] = useState<Fonte>("osm");
-  const [carregando, setCarregando] = useState(false);
-  const [progresso, setProgresso] = useState("");
-  const [erro, setErro] = useState<string | null>(null);
+  const { busca, empresas, fonte, proxima, carregando, parcial, progresso, erro, setErro, buscar, carregarMais } =
+    useBusca();
   const [filtro, setFiltro] = useState<Filtro>("oportunidades");
   const [ordem, setOrdem] = useState<Ordem>("contato");
+  // "avaliações"/"nota" só existem no Google: trocou pra outra fonte, volta pro padrão
+  const [fonteAnterior, setFonteAnterior] = useState(fonte);
+  if (fonte !== fonteAnterior) {
+    setFonteAnterior(fonte);
+    if (fonte !== "google") setOrdem("contato");
+  }
   const [soTelefone, setSoTelefone] = useState(false);
+  // quem já virou lead sai da lista (dá pra desligar pra ver todo mundo)
+  const [esconderSalvos, setEsconderSalvos] = useState(true);
   const [salvos, setSalvos] = useState<Set<string>>(new Set());
+  // instantâneo de quem já estava salvo quando a busca atual começou: salvar um card durante
+  // os resultados não tira ele da tela (senão o toque vira sem querer no vizinho de baixo).
+  const [salvosNaBusca, setSalvosNaBusca] = useState<Set<string>>(new Set());
   const [modelo, setModelo] = useState(MENSAGEM_PADRAO);
   const [editandoMsg, setEditandoMsg] = useState(false);
 
@@ -79,75 +86,52 @@ export function Garimpar() {
       } catch {}
       setModelo(lerModelo());
     });
+    // banco fora do ar: segue sem marcar os salvos em vez de quebrar a página
     idsSalvos()
-      .then((ids) => vivo && setSalvos(ids))
+      .then((ids) => {
+        if (!vivo) return;
+        setSalvos(ids);
+        setSalvosNaBusca(ids);
+      })
       .catch(() => {});
     return () => {
       vivo = false;
     };
   }, []);
 
+  // nova busca: trava o instantâneo de salvos pra essa rodada de resultados
+  // ("carregar mais" reusa o mesmo objeto de busca, então não reseta o instantâneo).
+  useEffect(() => {
+    if (busca) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- trava o instantâneo quando a busca (identidade) muda
+      setSalvosNaBusca(salvos);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busca]);
+
   const termo = nichoId === "outro" ? outro.trim() : (nichoPorId(nichoId)?.termo ?? "");
   const nichoLabel = nichoId === "outro" ? outro.trim() : (nichoPorId(nichoId)?.label ?? "");
 
-  async function chamar(pagina?: string) {
-    const alvo = pagina && busca ? busca : { nichoId, termo, cidade: cidade.trim(), nicho: nichoLabel };
-    if (!alvo.termo || !alvo.cidade) {
-      setErro("Escolha um nicho e informe a cidade.");
-      return;
-    }
-    setCarregando(true);
-    setErro(null);
-    setProgresso("");
-    try {
-      const r = USA_GOOGLE
-        ? await buscarNoServidor({
-            nicho: alvo.nichoId,
-            termo: alvo.termo,
-            categoria: alvo.nicho,
-            cidade: alvo.cidade,
-            pagina,
-          })
-        : await buscarOsm(alvo.nichoId, alvo.termo, alvo.cidade, alvo.nicho, setProgresso).catch((e) => {
-            // navegador bloqueado pelo mapa (limite/extensão/rede): tenta a mesma busca pelo servidor
-            if (!(e instanceof SemAcesso)) throw e;
-            setProgresso("Tentando pelo servidor…");
-            return buscarNoServidor({ nicho: alvo.nichoId, termo: alvo.termo, categoria: alvo.nicho, cidade: alvo.cidade });
-          });
-      setBusca(alvo);
-      setFonte(r.fonte);
-      setProxima(r.proximaPagina);
-      setEmpresas((atual) => {
-        if (!pagina) return r.empresas;
-        const vistos = new Set(atual.map((e) => e.placeId));
-        return [...atual, ...r.empresas.filter((e) => !vistos.has(e.placeId))];
-      });
+  // Estável entre renders (só muda com a busca): é o que deixa o memo dos cartões funcionar.
+  const salvar = useCallback(
+    async (e: Empresa) => {
+      if (!busca) return;
+      setSalvos((s) => new Set(s).add(e.placeId));
       try {
-        localStorage.setItem(CIDADE_KEY, alvo.cidade);
-      } catch {}
-    } catch (e) {
-      const tempo = e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError");
-      setErro(tempo ? "A busca demorou demais. Tente de novo em 1 minuto." : e instanceof Error ? e.message : "Erro ao buscar.");
-    } finally {
-      setCarregando(false);
-    }
-  }
+        await salvarLead(e, { nicho: busca.nicho, cidade: busca.cidade });
+      } catch (err) {
+        setSalvos((s) => {
+          const n = new Set(s);
+          n.delete(e.placeId);
+          return n;
+        });
+        setErro(err instanceof Error ? `Não salvou: ${err.message}` : "Não salvou o lead.");
+      }
+    },
+    [busca, setErro],
+  );
 
-  async function salvar(e: Empresa) {
-    if (!busca) return;
-    setSalvos((s) => new Set(s).add(e.placeId));
-    try {
-      await salvarLead(e, { nicho: busca.nicho, cidade: busca.cidade });
-    } catch (err) {
-      setSalvos((s) => {
-        const n = new Set(s);
-        n.delete(e.placeId);
-        return n;
-      });
-      setErro(err instanceof Error ? `Não salvou: ${err.message}` : "Não salvou o lead.");
-    }
-  }
-
+  // Os números contam tudo que a busca trouxe, não só o que está visível.
   const contagem = useMemo(
     () => ({
       total: empresas.length,
@@ -160,33 +144,49 @@ export function Garimpar() {
   );
 
   const visiveis = useMemo(() => {
-    const lista = empresas.filter(
+    const base = esconderSalvos ? semSalvos(empresas, salvosNaBusca) : empresas;
+    const lista = base.filter(
       (e) =>
         (filtro === "todos" ? true : filtro === "oportunidades" ? e.presenca !== "tem_site" : e.presenca === filtro) &&
         (!soTelefone || e.telefone),
     );
-    const ordenar: Record<Ordem, (a: Empresa, b: Empresa) => number> = {
-      contato: (a, b) => pesoContato(b) - pesoContato(a) || b.avaliacoes - a.avaliacoes || a.nome.localeCompare(b.nome),
-      nome: (a, b) => a.nome.localeCompare(b.nome, "pt-BR"),
-      avaliacoes: (a, b) => b.avaliacoes - a.avaliacoes,
-      nota: (a, b) => (b.nota ?? 0) - (a.nota ?? 0) || b.avaliacoes - a.avaliacoes,
-    };
-    return lista.sort(ordenar[ordem]);
-  }, [empresas, filtro, ordem, soTelefone]);
+    if (ordem !== "contato") return lista.sort(ORDENAR[ordem]);
+    // celular (dá WhatsApp) > fixo > sem telefone; o peso é calculado uma vez por empresa
+    return lista
+      .map((e) => [pesoContato(e), e] as const)
+      .sort(([pa, a], [pb, b]) => pb - pa || b.avaliacoes - a.avaliacoes || a.nome.localeCompare(b.nome, "pt-BR"))
+      .map(([, e]) => e);
+  }, [empresas, filtro, ordem, soTelefone, esconderSalvos, salvosNaBusca]);
+
+  const garimpando = carregando === "busca";
 
   return (
     <main className="flex-1">
       {/* ---------- Hero + busca ---------- */}
-      <section className="hero-glow relative -mt-20 px-4 pb-16 pt-36 sm:pt-40">
-        <div className="mx-auto max-w-4xl text-center">
-          <p className="inline-flex items-center gap-2 rounded-full border border-line bg-panel/60 px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-muted">
-            <span className="size-1.5 rounded-full bg-lime" /> OpenStreetMap · grátis · uso próprio
+      {/* Entrada uma vez só: aurora acende → título decifra → formulário sobe. Depois fica parado. */}
+      <section className="relative isolate -mt-20 overflow-hidden px-4 pb-16 pt-36 sm:pt-44">
+        <AuroraFundo className="absolute inset-0 -z-10 animate-acender" />
+        <div aria-hidden className="grade-fundo absolute inset-0 -z-10" />
+        <div aria-hidden className="absolute inset-x-0 bottom-0 -z-10 h-32 bg-gradient-to-b from-transparent to-ink" />
+
+        <div className="mx-auto max-w-5xl text-center">
+          <p className="vidro inline-flex items-center gap-2 rounded-full px-3 py-1.5 font-mono text-[11px] uppercase tracking-widest text-cream/80">
+            <span className="size-1.5 rounded-full bg-lime shadow-[0_0_8px_1px_rgb(10_228_72/0.8)]" />
+            OpenStreetMap · grátis · uso próprio
           </p>
-          <h1 className="mt-6 font-display text-5xl font-bold leading-[1.02] tracking-tight sm:text-7xl">
-            Ache quem ainda <br className="hidden sm:block" />
-            <em className="text-lime">não tem site.</em>
+          <h1 className="mt-7 font-display text-[clamp(2.75rem,9vw,7rem)] font-bold leading-[0.95] tracking-tighter">
+            <span className="texto-cromado">Ache quem ainda</span>
+            {/* o texto invisível reserva o tamanho final: os símbolos do embaralhamento não empurram a linha */}
+            <span className="relative mt-1 block font-serif font-normal italic tracking-tight text-lime">
+              <span className="invisible">não tem site.</span>
+              <TextoDecrypt
+                texto="não tem site."
+                atrasoMs={150}
+                className="absolute inset-0 flex justify-center whitespace-nowrap drop-shadow-[0_0_24px_rgb(10_228_72/0.35)]"
+              />
+            </span>
           </h1>
-          <p className="mx-auto mt-5 max-w-xl text-base text-muted sm:text-lg">
+          <p className="mx-auto mt-6 max-w-xl text-base text-muted sm:text-lg">
             Escolha o nicho e a cidade. O Garimpo puxa os negócios do mapa e separa quem está sem
             site ou vivendo só de Instagram.
           </p>
@@ -195,39 +195,56 @@ export function Garimpar() {
         <form
           onSubmit={(ev) => {
             ev.preventDefault();
-            chamar();
+            buscar({ nichoId, termo, cidade: cidade.trim(), nicho: nichoLabel });
           }}
-          className="mx-auto mt-10 max-w-4xl rounded-3xl border border-line bg-panel/80 p-2 backdrop-blur-xl"
+          className="mx-auto mt-10 max-w-4xl animate-rise rounded-3xl border border-line bg-panel p-2 shadow-[0_24px_80px_-24px_rgb(0_0_0/0.9)] [animation-delay:300ms]"
         >
-          <div className="rounded-2xl bg-panel-2 p-4 sm:p-5">
-            <p className="mb-3 font-mono text-[11px] uppercase tracking-widest text-muted">Nicho</p>
-            <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1 sm:flex-wrap sm:overflow-visible">
-              {NICHOS.map((n) => {
-                const Icon = n.icon;
-                return (
+          <div className="rounded-2xl bg-panel-2 py-4 sm:py-5">
+            <p className="mb-3 px-4 font-mono text-[11px] uppercase tracking-widest text-muted sm:px-5">Nicho</p>
+            {/* celular: faixa rolável com encaixe e bordas esmaecidas; tablet pra cima: quebra linha */}
+            <div className="relative">
+              <div className="no-scrollbar flex snap-x snap-mandatory scroll-px-4 gap-2 overflow-x-auto px-4 pb-1 sm:scroll-px-5 sm:px-5 md:flex-wrap md:overflow-visible [&>*]:snap-start">
+                {NICHOS.map((n) => (
                   <Chip key={n.id} ativo={nichoId === n.id} onClick={() => setNichoId(n.id)}>
-                    <Icon className="size-4" /> {n.label}
+                    <span className="-my-1.5 -ml-2.5">
+                      <PastilhaCromada icon={n.icon} tamanho="sm" />
+                    </span>
+                    {n.label}
                   </Chip>
-                );
-              })}
-              <Chip ativo={nichoId === "outro"} onClick={() => setNichoId("outro")}>
-                <Plus className="size-4" /> Outro
-              </Chip>
+                ))}
+                <Chip ativo={nichoId === "outro"} onClick={() => setNichoId("outro")}>
+                  <span className="-my-1.5 -ml-2.5">
+                    <PastilhaCromada icon={Plus} tamanho="sm" />
+                  </span>
+                  Outro
+                </Chip>
+              </div>
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-y-0 left-0 w-4 bg-gradient-to-r from-panel-2 to-transparent md:hidden"
+              />
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-panel-2 to-transparent md:hidden"
+              />
             </div>
             {nichoId === "outro" && (
-              <input
-                autoFocus
-                value={outro}
-                onChange={(e) => setOutro(e.target.value)}
-                placeholder="Ex.: loja de roupas, autoescola, floricultura…"
-                maxLength={80}
-                className="mt-3 w-full rounded-xl border border-line bg-ink px-4 py-3 text-sm outline-none placeholder:text-muted/70 focus:border-lime/60"
-              />
+              <div className="px-4 sm:px-5">
+                <input
+                  autoFocus
+                  value={outro}
+                  onChange={(e) => setOutro(e.target.value)}
+                  placeholder="Ex.: loja de roupas, autoescola, floricultura…"
+                  maxLength={80}
+                  aria-label="Outro nicho"
+                  className="mt-3 min-h-12 w-full rounded-xl border border-line bg-ink px-4 py-3 text-base outline-none placeholder:text-muted/70 focus:border-lime/60 sm:text-sm"
+                />
+              </div>
             )}
           </div>
 
-          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-            <label className="flex flex-1 items-center gap-3 rounded-2xl bg-panel-2 px-4">
+          <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-stretch">
+            <label className="flex min-w-0 flex-1 items-center gap-3 rounded-2xl bg-panel-2 px-4 focus-within:ring-1 focus-within:ring-lime/50">
               <MapPin className="size-5 shrink-0 text-muted" />
               <span className="sr-only">Cidade</span>
               <input
@@ -235,29 +252,21 @@ export function Garimpar() {
                 onChange={(e) => setCidade(e.target.value)}
                 placeholder="Cidade — ex.: Lavras, MG"
                 maxLength={80}
-                className="h-14 w-full bg-transparent text-base outline-none placeholder:text-muted/70"
+                className="h-14 w-full min-w-0 bg-transparent text-base outline-none placeholder:text-muted/70"
               />
             </label>
-            <button
-              type="submit"
-              disabled={carregando}
-              className="flex h-14 items-center justify-center gap-2 rounded-2xl bg-lime px-8 font-bold text-ink transition-transform active:scale-[0.98] disabled:opacity-70"
-            >
-              {carregando && !proxima ? <Loader2 className="size-5 animate-spin" /> : <Search className="size-5" />}
-              Garimpar
-            </button>
+            <BotaoLuz type="submit" disabled={carregando === "mais"} className="w-full text-base sm:w-auto sm:px-9">
+              {garimpando ? <Loader2 className="size-5 animate-spin" /> : <Search className="size-5" />}
+              {garimpando ? "Garimpando…" : "Garimpar"}
+            </BotaoLuz>
           </div>
         </form>
 
-        {carregando && !proxima && (
-          <p role="status" className="mx-auto mt-4 flex max-w-4xl items-center justify-center gap-2 text-sm text-muted">
-            <Loader2 className="size-4 animate-spin text-lime" />
-            {progresso || "Buscando…"}
-          </p>
-        )}
-
         {erro && (
-          <p role="alert" className="mx-auto mt-4 max-w-4xl rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+          <p
+            role="alert"
+            className="mx-auto mt-4 max-w-4xl rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300"
+          >
             {erro}
           </p>
         )}
@@ -271,11 +280,13 @@ export function Garimpar() {
           <Vazio />
         ) : (
           <>
-            <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-              <div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div className="min-w-0">
                 <p className="font-mono text-[11px] uppercase tracking-widest text-muted">Resultado</p>
-                <h2 className="mt-1 font-display text-3xl font-bold sm:text-4xl">
-                  {busca.nicho} <span className="italic text-muted">em</span> {busca.cidade}
+                <h2 className="mt-1 font-display text-3xl font-bold tracking-tight [overflow-wrap:anywhere] sm:text-5xl">
+                  <span className="texto-cromado">{busca.nicho}</span>{" "}
+                  <span className="font-serif font-normal italic text-muted">em</span>{" "}
+                  <span className="texto-cromado">{busca.cidade}</span>
                 </h2>
               </div>
               {fonte === "osm" && (
@@ -286,7 +297,7 @@ export function Garimpar() {
               )}
             </div>
 
-            {/* números em bento */}
+            {/* números com holofote: 2×2 no celular, 4 colunas a partir de 640 px */}
             <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-4">
               <Numero valor={contagem.total} label="encontrados" />
               <Numero valor={contagem.sem_site} label="sem site" cor="text-lime" />
@@ -298,8 +309,9 @@ export function Garimpar() {
               )}
             </div>
 
-            <div className="mt-8 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+            {/* filtros: no desktop grudam logo abaixo da pílula da navbar (76 px + folga) */}
+            <div className="z-30 -mx-2 mt-8 flex flex-col gap-3 rounded-2xl px-2 py-2 lg:sticky lg:top-[5.25rem] lg:border lg:border-line lg:bg-ink/85 lg:backdrop-blur-xl">
+              <div className="no-scrollbar -mx-1 flex min-w-0 gap-2 overflow-x-auto px-1 pb-1 lg:flex-wrap lg:overflow-visible lg:pb-0">
                 {FILTROS.map((f) => (
                   <Chip key={f.id} ativo={filtro === f.id} onClick={() => setFiltro(f.id)}>
                     {f.label}
@@ -308,15 +320,18 @@ export function Garimpar() {
                 <Chip ativo={soTelefone} onClick={() => setSoTelefone((v) => !v)}>
                   <Phone className="size-4" /> Com telefone
                 </Chip>
+                <Chip ativo={esconderSalvos} onClick={() => setEsconderSalvos((v) => !v)}>
+                  <BookmarkCheck className="size-4" /> Esconder salvos
+                </Chip>
               </div>
-              <div className="flex gap-2">
-                <label className="flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm">
-                  <ArrowDownWideNarrow className="size-4 text-muted" />
+              <div className="flex shrink-0 gap-2">
+                <label className="vidro flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-full px-4 text-sm sm:flex-none">
+                  <ArrowDownWideNarrow className="size-4 shrink-0 text-muted" />
                   <span className="sr-only">Ordenar por</span>
                   <select
                     value={ordem}
                     onChange={(e) => setOrdem(e.target.value as Ordem)}
-                    className="bg-transparent outline-none [&>option]:bg-panel"
+                    className="min-h-11 w-full min-w-0 bg-transparent outline-none [&>option]:bg-panel"
                   >
                     <option value="contato">Com WhatsApp primeiro</option>
                     <option value="nome">Nome (A–Z)</option>
@@ -328,7 +343,9 @@ export function Garimpar() {
                   type="button"
                   onClick={() => setEditandoMsg((v) => !v)}
                   aria-expanded={editandoMsg}
-                  className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm text-cream/80 hover:text-cream"
+                  className={`inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full px-4 text-sm transition-colors ${
+                    editandoMsg ? "border border-cream bg-cream font-semibold text-ink" : "vidro text-cream/80 hover:text-cream"
+                  }`}
                 >
                   <PencilLine className="size-4" /> Mensagem
                 </button>
@@ -340,6 +357,7 @@ export function Garimpar() {
                 modelo={modelo}
                 exemplo={visiveis[0]?.nome ?? "Barbearia do Zé"}
                 cidade={busca.cidade}
+                nicho={busca.nicho}
                 onSalvar={(t) => {
                   setModelo(t);
                   salvarModelo(t);
@@ -348,13 +366,29 @@ export function Garimpar() {
               />
             )}
 
+            {/* resultados chegam ao vivo: a linha de progresso fica no topo da grade até terminar */}
+            {parcial && (
+              <div className="mt-6">
+                <div aria-hidden className="relative h-px overflow-hidden rounded-full bg-line motion-reduce:bg-lime/40">
+                  <div className="absolute inset-y-0 left-0 w-1/3 animate-varrer bg-gradient-to-r from-transparent via-lime to-transparent motion-reduce:hidden" />
+                </div>
+                <p role="status" className="mt-3 flex items-center gap-2 text-sm text-muted">
+                  <Loader2 className="size-4 animate-spin text-lime motion-reduce:animate-none" />
+                  {progresso || "Buscando…"}
+                </p>
+              </div>
+            )}
+
             {visiveis.length === 0 ? (
-              <p className="mt-10 rounded-3xl border border-dashed border-line p-10 text-center text-muted">
-                {empresas.length === 0 && fonte === "osm"
-                  ? "O OpenStreetMap não tem esse nicho cadastrado nessa cidade. Tente outro nicho ou uma cidade maior por perto."
-                  : "Nenhum resultado com esse filtro."}
-                {proxima && " Tente carregar mais resultados."}
-              </p>
+              mostrarVazio({ parcial, erro }) && (
+                <p className="mt-10 rounded-3xl border border-dashed border-line p-10 text-center text-muted">
+                  {empresas.length === 0 && fonte === "osm"
+                    ? "O OpenStreetMap não tem esse nicho cadastrado nessa cidade. Tente outro nicho ou uma cidade maior por perto."
+                    : "Nenhum resultado com esse filtro."}
+                  {empresas.length > 0 && esconderSalvos && salvosNaBusca.size > 0 && " Os já salvos estão escondidos."}
+                  {proxima && " Tente carregar mais resultados."}
+                </p>
+              )
             ) : (
               <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {visiveis.map((e, i) => (
@@ -362,9 +396,10 @@ export function Garimpar() {
                     key={e.placeId}
                     empresa={e}
                     cidade={busca.cidade}
+                    nicho={busca.nicho}
                     modelo={modelo}
                     salvo={salvos.has(e.placeId)}
-                    onSalvar={() => salvar(e)}
+                    onSalvar={salvar}
                     indice={i}
                   />
                 ))}
@@ -375,11 +410,11 @@ export function Garimpar() {
               <div className="mt-10 text-center">
                 <button
                   type="button"
-                  onClick={() => chamar(proxima)}
-                  disabled={carregando}
-                  className="inline-flex items-center gap-2 rounded-full border border-cream px-6 py-3 text-sm font-semibold transition-colors hover:bg-cream hover:text-ink disabled:opacity-60"
+                  onClick={() => carregarMais()}
+                  disabled={carregando !== null}
+                  className="inline-flex min-h-11 items-center gap-2 rounded-full border border-cream px-6 py-3 text-sm font-semibold transition-colors hover:bg-cream hover:text-ink disabled:opacity-60"
                 >
-                  {carregando && <Loader2 className="size-4 animate-spin" />}
+                  {carregando === "mais" && <Loader2 className="size-4 animate-spin" />}
                   Carregar mais 20
                 </button>
                 <p className="mt-2 text-xs text-muted">O Google entrega no máximo 60 por busca.</p>
@@ -394,12 +429,12 @@ export function Garimpar() {
 
 function Numero({ valor, label, cor = "text-cream" }: { valor: number; label: string; cor?: string }) {
   return (
-    <div className="rounded-2xl border border-line bg-panel p-1.5">
-      <div className="rounded-xl bg-panel-2 px-4 py-3">
-        <p className={`font-display text-3xl font-bold ${cor}`}>{valor}</p>
+    <SpotlightCard className="rounded-2xl border border-line bg-panel p-1.5">
+      <div className="relative rounded-xl bg-panel-2/70 px-4 py-3">
+        <Contador valor={valor} className={`block font-display text-3xl font-bold tracking-tight sm:text-4xl ${cor}`} />
         <p className="text-xs text-muted">{label}</p>
       </div>
-    </div>
+    </SpotlightCard>
   );
 }
 
@@ -407,38 +442,41 @@ function EditorMensagem({
   modelo,
   exemplo,
   cidade,
+  nicho,
   onSalvar,
 }: {
   modelo: string;
   exemplo: string;
   cidade: string;
+  nicho: string;
   onSalvar: (t: string) => void;
 }) {
   const [texto, setTexto] = useState(modelo);
   return (
-    <div className="mt-4 grid gap-3 rounded-3xl border border-line bg-panel p-2 lg:grid-cols-2">
+    <div className="mt-4 grid gap-2 rounded-3xl border border-line bg-panel p-2 md:grid-cols-2">
       <div className="rounded-2xl bg-panel-2 p-4">
         <p className="font-mono text-[11px] uppercase tracking-widest text-muted">
-          Modelo · use {"{nome}"} e {"{cidade}"}
+          Modelo · use {"{nome}"}, {"{cidade}"} e {"{nicho}"}
         </p>
         <textarea
           value={texto}
           onChange={(e) => setTexto(e.target.value)}
           rows={6}
-          className="mt-2 w-full resize-y rounded-xl border border-line bg-ink p-3 text-sm outline-none focus:border-lime/60"
+          aria-label="Modelo da mensagem"
+          className="mt-2 w-full resize-y rounded-xl border border-line bg-ink p-3 text-base outline-none focus:border-lime/60 sm:text-sm"
         />
-        <div className="mt-2 flex gap-2">
+        <div className="mt-2 flex flex-wrap gap-2">
           <button
             type="button"
             onClick={() => onSalvar(texto)}
-            className="rounded-full bg-lime px-4 py-2 text-sm font-bold text-ink"
+            className="min-h-11 rounded-full bg-lime px-5 text-sm font-bold text-ink"
           >
             Salvar modelo
           </button>
           <button
             type="button"
             onClick={() => setTexto(MENSAGEM_PADRAO)}
-            className="rounded-full px-4 py-2 text-sm text-muted hover:text-cream"
+            className="min-h-11 rounded-full px-4 text-sm text-muted hover:text-cream"
           >
             Voltar ao padrão
           </button>
@@ -446,29 +484,39 @@ function EditorMensagem({
       </div>
       <div className="rounded-2xl bg-[#0b141a] p-4">
         <p className="font-mono text-[11px] uppercase tracking-widest text-muted">Como chega no WhatsApp</p>
-        <p className="mt-3 max-w-md whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-[#005c4b] px-3 py-2 text-sm leading-relaxed text-white ml-auto">
-          {montarMensagem(texto, { nome: exemplo, cidade })}
+        <p className="ml-auto mt-3 max-w-md whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-[#005c4b] px-3 py-2 text-sm leading-relaxed text-white [overflow-wrap:anywhere]">
+          {montarMensagem(texto, { nome: exemplo, cidade, nicho })}
         </p>
       </div>
     </div>
   );
 }
 
+const PASSOS: { n: string; t: string; d: string; icon: LucideIcon }[] = [
+  { n: "01", t: "Escolha o nicho", d: "Barbearia, dentista, pet shop… ou digite qualquer outro.", icon: Target },
+  {
+    n: "02",
+    t: "Veja quem está sem site",
+    d: "Separamos sem site, só Instagram e quem já tem site. Qualquer cidade do Brasil.",
+    icon: ScanSearch,
+  },
+  { n: "03", t: "Chame no WhatsApp", d: "Mensagem pronta com o nome do negócio. Salve como lead.", icon: MessageCircle },
+];
+
 function Vazio() {
   return (
     <div className="grid gap-3 md:grid-cols-3">
-      {[
-        { n: "01", t: "Escolha o nicho", d: "Barbearia, dentista, pet shop… ou digite qualquer outro." },
-        { n: "02", t: "Veja quem está sem site", d: "Separamos sem site, só Instagram e quem já tem site. Qualquer cidade do Brasil." },
-        { n: "03", t: "Chame no WhatsApp", d: "Mensagem pronta com o nome do negócio. Salve como lead." },
-      ].map((p) => (
-        <div key={p.n} className="rounded-3xl border border-line bg-panel p-2">
-          <div className="h-full rounded-2xl bg-panel-2 p-6">
-            <span className="font-mono text-xs text-lime">{p.n}</span>
-            <h3 className="mt-6 font-display text-2xl font-bold">{p.t}</h3>
+      {PASSOS.map((p) => (
+        <SpotlightCard key={p.n} className="rounded-3xl border border-line bg-panel p-2">
+          <div className="relative h-full rounded-2xl bg-panel-2/70 p-6">
+            <div className="flex items-center justify-between">
+              <PastilhaCromada icon={p.icon} />
+              <span className="font-mono text-xs text-lime">{p.n}</span>
+            </div>
+            <h3 className="mt-6 font-display text-2xl font-bold tracking-tight">{p.t}</h3>
             <p className="mt-2 text-sm text-muted">{p.d}</p>
           </div>
-        </div>
+        </SpotlightCard>
       ))}
       <p className="flex items-center justify-center gap-2 pt-4 text-sm text-muted md:col-span-3">
         <Pickaxe className="size-4" /> Nenhuma busca ainda.

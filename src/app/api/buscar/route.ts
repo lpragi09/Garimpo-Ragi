@@ -11,7 +11,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ erro: "Faça login." }, { status: 401 });
   }
 
-  const body = await request.json().catch(() => ({}));
+  const body = (await request.json().catch(() => null)) ?? {};
   const nichoId = String(body.nicho ?? "").trim().slice(0, 40);
   const termo = String(body.termo ?? "").trim().slice(0, 80);
   const categoria = String(body.categoria ?? termo).trim().slice(0, 80);
