@@ -25,6 +25,9 @@ export type Nicho = {
 };
 
 // Ordem = os que mais costumam estar sem site primeiro.
+// Pseudo-nicho: busca todos os nichos da lista numa cidade.
+export const TODOS = "todos";
+
 export const NICHOS: Nicho[] = [
   { id: "barbearia", label: "Barbearia", termo: "barbearia", icon: Scissors },
   { id: "salao", label: "Salão de beleza", termo: "salão de beleza", icon: Sparkles },

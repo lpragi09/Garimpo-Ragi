@@ -34,7 +34,7 @@ export function ehQuente(e: { presenca: Presenca; avaliacoes: number; nota: numb
   return e.presenca !== "tem_site" && e.avaliacoes >= 30 && (e.nota ?? 0) >= 4.2;
 }
 
-// Chip em pílula de vidro; ativo vira creme sólido. Altura mínima de 44 px (toque).
+// Chip em pílula discreta (só contorno); ativo ganha o verde da marca. Altura mínima de 44 px (toque).
 export function Chip({
   ativo,
   onClick,
@@ -51,8 +51,8 @@ export function Chip({
       aria-pressed={ativo}
       className={`inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full px-4 py-2 text-sm transition-colors ${
         ativo
-          ? "border border-cream bg-cream font-semibold text-ink shadow-[0_0_24px_-6px_rgb(255_252_225/0.5)]"
-          : "vidro text-cream/80 hover:border-white/25 hover:text-cream"
+          ? "border border-lime/50 bg-lime/10 font-medium text-lime"
+          : "border border-line text-cream/70 hover:border-white/20 hover:text-cream"
       }`}
     >
       {children}

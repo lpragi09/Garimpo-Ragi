@@ -5,6 +5,7 @@ import {
   ArrowDownWideNarrow,
   BookmarkCheck,
   Info,
+  LayoutGrid,
   Loader2,
   MapPin,
   MessageCircle,
@@ -17,7 +18,7 @@ import {
   Target,
   type LucideIcon,
 } from "lucide-react";
-import { NICHOS, nichoPorId } from "@/lib/nichos";
+import { NICHOS, TODOS, nichoPorId } from "@/lib/nichos";
 import { MENSAGEM_PADRAO, lerModelo, montarMensagem, salvarModelo } from "@/lib/contato";
 import { pesoContato, semSalvos } from "@/lib/filtros";
 import { idsSalvos, salvarLead } from "@/lib/leads";
@@ -73,6 +74,8 @@ export function Garimpar() {
   // instantâneo de quem já estava salvo quando a busca atual começou: salvar um card durante
   // os resultados não tira ele da tela (senão o toque vira sem querer no vizinho de baixo).
   const [salvosNaBusca, setSalvosNaBusca] = useState<Set<string>>(new Set());
+  // no "Todos": mostrar só um nicho dos resultados ("" = todos)
+  const [nichoFiltro, setNichoFiltro] = useState("");
   const [modelo, setModelo] = useState(MENSAGEM_PADRAO);
   const [editandoMsg, setEditandoMsg] = useState(false);
 
@@ -105,12 +108,21 @@ export function Garimpar() {
     if (busca) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- trava o instantâneo quando a busca (identidade) muda
       setSalvosNaBusca(salvos);
+      setNichoFiltro("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busca]);
 
-  const termo = nichoId === "outro" ? outro.trim() : (nichoPorId(nichoId)?.termo ?? "");
-  const nichoLabel = nichoId === "outro" ? outro.trim() : (nichoPorId(nichoId)?.label ?? "");
+  const termo =
+    nichoId === TODOS ? TODOS : nichoId === "outro" ? outro.trim() : (nichoPorId(nichoId)?.termo ?? "");
+  const nichoLabel =
+    nichoId === TODOS ? "Todos os nichos" : nichoId === "outro" ? outro.trim() : (nichoPorId(nichoId)?.label ?? "");
+  // No "Todos" cada empresa traz o próprio nicho (vai pro lead e pra mensagem do WhatsApp)
+  const buscaTodos = busca?.nichoId === TODOS;
+  const nichoDe = useCallback(
+    (e: Empresa) => (buscaTodos && e.categoria ? e.categoria : (busca?.nicho ?? "")),
+    [buscaTodos, busca],
+  );
 
   // Estável entre renders (só muda com a busca): é o que deixa o memo dos cartões funcionar.
   const salvar = useCallback(
@@ -118,7 +130,7 @@ export function Garimpar() {
       if (!busca) return;
       setSalvos((s) => new Set(s).add(e.placeId));
       try {
-        await salvarLead(e, { nicho: busca.nicho, cidade: busca.cidade });
+        await salvarLead(e, { nicho: nichoDe(e), cidade: busca.cidade });
       } catch (err) {
         setSalvos((s) => {
           const n = new Set(s);
@@ -128,7 +140,7 @@ export function Garimpar() {
         setErro(err instanceof Error ? `Não salvou: ${err.message}` : "Não salvou o lead.");
       }
     },
-    [busca, setErro],
+    [busca, setErro, nichoDe],
   );
 
   // Os números contam tudo que a busca trouxe, não só o que está visível.
@@ -148,7 +160,8 @@ export function Garimpar() {
     const lista = base.filter(
       (e) =>
         (filtro === "todos" ? true : filtro === "oportunidades" ? e.presenca !== "tem_site" : e.presenca === filtro) &&
-        (!soTelefone || e.telefone),
+        (!soTelefone || e.telefone) &&
+        (!nichoFiltro || e.categoria === nichoFiltro),
     );
     if (ordem !== "contato") return lista.sort(ORDENAR[ordem]);
     // celular (dá WhatsApp) > fixo > sem telefone; o peso é calculado uma vez por empresa
@@ -156,7 +169,15 @@ export function Garimpar() {
       .map((e) => [pesoContato(e), e] as const)
       .sort(([pa, a], [pb, b]) => pb - pa || b.avaliacoes - a.avaliacoes || a.nome.localeCompare(b.nome, "pt-BR"))
       .map(([, e]) => e);
-  }, [empresas, filtro, ordem, soTelefone, esconderSalvos, salvosNaBusca]);
+  }, [empresas, filtro, ordem, soTelefone, esconderSalvos, salvosNaBusca, nichoFiltro]);
+
+  // nichos que apareceram no "Todos", com quantos de cada (pro seletor dos resultados)
+  const nichosAchados = useMemo(() => {
+    if (!buscaTodos) return [];
+    const n = new Map<string, number>();
+    for (const e of empresas) if (e.categoria) n.set(e.categoria, (n.get(e.categoria) ?? 0) + 1);
+    return [...n].sort((a, b) => b[1] - a[1]);
+  }, [buscaTodos, empresas]);
 
   const garimpando = carregando === "busca";
 
@@ -204,19 +225,16 @@ export function Garimpar() {
             {/* celular: faixa rolável com encaixe e bordas esmaecidas; tablet pra cima: quebra linha */}
             <div className="relative">
               <div className="no-scrollbar flex snap-x snap-mandatory scroll-px-4 gap-2 overflow-x-auto px-4 pb-1 sm:scroll-px-5 sm:px-5 md:flex-wrap md:overflow-visible [&>*]:snap-start">
+                <Chip ativo={nichoId === TODOS} onClick={() => setNichoId(TODOS)}>
+                  <LayoutGrid className="size-4 opacity-80" /> Todos
+                </Chip>
                 {NICHOS.map((n) => (
                   <Chip key={n.id} ativo={nichoId === n.id} onClick={() => setNichoId(n.id)}>
-                    <span className="-my-1.5 -ml-2.5">
-                      <PastilhaCromada icon={n.icon} tamanho="sm" />
-                    </span>
-                    {n.label}
+                    <n.icon className="size-4 opacity-80" /> {n.label}
                   </Chip>
                 ))}
                 <Chip ativo={nichoId === "outro"} onClick={() => setNichoId("outro")}>
-                  <span className="-my-1.5 -ml-2.5">
-                    <PastilhaCromada icon={Plus} tamanho="sm" />
-                  </span>
-                  Outro
+                  <Plus className="size-4 opacity-80" /> Outro
                 </Chip>
               </div>
               <div
@@ -228,6 +246,12 @@ export function Garimpar() {
                 className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-panel-2 to-transparent md:hidden"
               />
             </div>
+            {nichoId === TODOS && (
+              <p className="mt-3 px-4 text-xs text-muted sm:px-5">
+                Busca todos os nichos da lista na cidade. Leva até ~1 minuto (o mapa libera 1 consulta por segundo);
+                os resultados vão aparecendo.
+              </p>
+            )}
             {nichoId === "outro" && (
               <div className="px-4 sm:px-5">
                 <input
@@ -324,7 +348,25 @@ export function Garimpar() {
                   <BookmarkCheck className="size-4" /> Esconder salvos
                 </Chip>
               </div>
-              <div className="flex shrink-0 gap-2">
+              <div className="flex shrink-0 flex-wrap gap-2">
+                {buscaTodos && nichosAchados.length > 0 && (
+                  <label className="vidro flex min-h-11 min-w-0 items-center gap-2 rounded-full px-4 text-sm">
+                    <LayoutGrid className="size-4 shrink-0 text-muted" />
+                    <span className="sr-only">Nicho</span>
+                    <select
+                      value={nichoFiltro}
+                      onChange={(e) => setNichoFiltro(e.target.value)}
+                      className="min-h-11 w-full min-w-0 bg-transparent outline-none [&>option]:bg-panel"
+                    >
+                      <option value="">Todos os nichos</option>
+                      {nichosAchados.map(([nome, qtd]) => (
+                        <option key={nome} value={nome}>
+                          {nome} ({qtd})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 <label className="vidro flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-full px-4 text-sm sm:flex-none">
                   <ArrowDownWideNarrow className="size-4 shrink-0 text-muted" />
                   <span className="sr-only">Ordenar por</span>
@@ -396,7 +438,7 @@ export function Garimpar() {
                     key={e.placeId}
                     empresa={e}
                     cidade={busca.cidade}
-                    nicho={busca.nicho}
+                    nicho={nichoDe(e)}
                     modelo={modelo}
                     salvo={salvos.has(e.placeId)}
                     onSalvar={salvar}

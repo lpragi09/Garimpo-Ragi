@@ -153,3 +153,69 @@ describe("buscarOsm", () => {
     expect(chamadas).toHaveLength(1);
   });
 });
+
+// ---------- "Todos": todos os nichos numa busca só ----------
+
+describe('buscarOsm("todos")', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  // Uma página curta por etiqueta; os salões/barbearias vêm com nomes que os separam.
+  function mapaPorEtiqueta() {
+    const chamadas: string[] = [];
+    let proximoId = 1;
+    const lugar = (name: string, extratags: Record<string, string> = {}) => {
+      const id = proximoId++;
+      return { place_id: id, category: "shop", osm_type: "node", osm_id: id, name, extratags, address: { city: "Lavras" } };
+    };
+    const fetchFalso = vi.fn(async (url: string | URL) => {
+      const u = new URL(String(url));
+      if (u.hostname === "photon.komoot.io") {
+        return Response.json({
+          features: [{ properties: { name: "Lavras", osm_type: "R", type: "city", countrycode: "BR", extent: [-45.1, -21.1, -44.9, -21.3] } }],
+        });
+      }
+      const q = u.searchParams.get("q") ?? "";
+      chamadas.push(q);
+      if (q === "[shop=hairdresser]") return Response.json([lugar("Barbearia do Zé"), lugar("Studio Ana Cabelos")]);
+      if (q === "[amenity=dentist]") return Response.json([lugar("Sorriso Odonto")]);
+      return Response.json([]);
+    });
+    return { chamadas, fetchFalso };
+  }
+
+  it("consulta cada etiqueta uma vez só, sem as buscas por texto", async () => {
+    const { chamadas, fetchFalso } = mapaPorEtiqueta();
+    vi.stubGlobal("fetch", fetchFalso);
+    await rodar(buscarOsm("todos", "todos", "Lavras, MG", "Todos os nichos"));
+    expect(chamadas).not.toContain("barbearia");
+    expect(chamadas).not.toContain("barber");
+    expect(new Set(chamadas).size).toBe(chamadas.length);
+    expect(chamadas).toContain("[amenity=dentist]");
+    expect(chamadas).toContain("[office=lawyer]");
+  });
+
+  it("cada empresa vem com o nicho dela como categoria", async () => {
+    const { fetchFalso } = mapaPorEtiqueta();
+    vi.stubGlobal("fetch", fetchFalso);
+    const r = await rodar(buscarOsm("todos", "todos", "Lavras, MG", "Todos os nichos"));
+    const porNome = Object.fromEntries(r.empresas.map((e) => [e.nome, e.categoria]));
+    expect(porNome).toEqual({
+      "Barbearia do Zé": "Barbearia",
+      "Studio Ana Cabelos": "Salão de beleza",
+      "Sorriso Odonto": "Dentista",
+    });
+  });
+
+  it("para etiqueta com página cheia, busca no máximo 2 páginas", async () => {
+    const { chamadas, fetchFalso } = mapaFalso();
+    vi.stubGlobal("fetch", fetchFalso);
+    await rodar(buscarOsm("todos", "todos", "Lavras, MG", "Todos os nichos"));
+    expect(chamadas.filter((c) => c.q === "[amenity=dentist]")).toHaveLength(2);
+  });
+});

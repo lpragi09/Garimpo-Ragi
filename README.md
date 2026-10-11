@@ -2,7 +2,7 @@
 
 Ferramenta pessoal pra achar negócios sem site e oferecer landing page / site.
 
-- Busca por nicho + cidade (qualquer cidade do Brasil) no **OpenStreetMap** — grátis, sem chave e sem cartão
+- Busca por nicho + cidade (qualquer cidade do Brasil), ou **Todos** os nichos de uma vez, no **OpenStreetMap** — grátis, sem chave e sem cartão
 - Separa quem está **sem site**, **só com rede social** (Instagram, iFood, Linktree…) e quem já tem site
 - Botão de WhatsApp com mensagem pronta (editável) quando o número é celular
 - Botão pra conferir o negócio no Google Maps antes de chamar

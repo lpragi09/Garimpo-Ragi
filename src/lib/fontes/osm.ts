@@ -3,6 +3,7 @@ import { classificarSite, linkGoogleMaps } from "./site";
 import { FonteErro } from "./erro";
 import { criarRitmo } from "./ritmo";
 import { combinarSinais } from "../http";
+import { TODOS, nichoPorId } from "../nichos";
 
 // OpenStreetMap: grátis, sem chave e sem cartão.
 // 1. Photon (komoot) acha a cidade e o retângulo dela.
@@ -24,6 +25,8 @@ const MAX_PAGINAS = 4; // por etiqueta: até 160 resultados
 // resultados é descartada, então páginas extras custam caro e rendem pouco.
 const GENERICAS = new Set(["[shop=hairdresser]", "[shop=beauty]"]);
 const MAX_PAGINAS_GENERICA = 2;
+// "Todos": cada etiqueta uma vez, até 2 páginas (~25 etiquetas ≈ 1 min a 1 req/s).
+const MAX_PAGINAS_TODOS = 2;
 // A lista de exclusão vai na URL: só os ids mais recentes, pra não estourar o tamanho.
 const MAX_EXCLUIR = 150;
 
@@ -203,24 +206,23 @@ export async function buscarOsm(
   const alvo = await acharCidade(cidade, sinal);
   const nomeCidade = semAcento(alvo.nome);
 
-  const filtro = FILTROS[nichoId];
-  // "Outro": busca pelo texto, que o Nominatim casa com o nome
-  const consultas = filtro?.consultas ?? [termo];
+  const plano = nichoId === TODOS ? planoTodos() : planoNicho(nichoId, termo, categoria);
 
   const vistos = new Set<string>();
   const empresas: Empresa[] = [];
-  // compartilhada entre as consultas: o que "barbearia" já trouxe não volta em "[shop=barber]"
+  // num nicho só, compartilhada entre as consultas: o que "barbearia" já trouxe não volta em
+  // "[shop=barber]". No "Todos" cada etiqueta é de um nicho diferente, então recomeça a cada uma.
   let excluir: number[] = [];
 
-  for (const q of consultas) {
-    const maxPaginas = filtro?.manter && GENERICAS.has(q) ? MAX_PAGINAS_GENERICA : MAX_PAGINAS;
-    for (let pagina = 0; pagina < maxPaginas; pagina++) {
+  for (const passo of plano.passos) {
+    if (!plano.excluirCompartilhado) excluir = [];
+    for (let pagina = 0; pagina < passo.maxPaginas; pagina++) {
       sinal?.throwIfAborted();
       await ritmoNominatim();
       sinal?.throwIfAborted();
       progresso?.(empresas.length ? `Buscando… ${empresas.length} encontrados até agora` : "Buscando no mapa…");
 
-      const lugares = await paginaNominatim(q, alvo.viewbox, excluir, sinal);
+      const lugares = await paginaNominatim(passo.q, alvo.viewbox, excluir, sinal);
       excluir = [...excluir, ...lugares.map((l) => l.place_id)].slice(-MAX_EXCLUIR);
       for (const l of lugares) {
         // busca por texto também acha rua e bairro com o mesmo nome: só negócio passa
@@ -229,8 +231,10 @@ export async function buscarOsm(
         // (quando a cidade buscada é um "district", o próprio Nominatim já devolve o endereço do distrito)
         const local = l.address?.city || l.address?.town || l.address?.village || l.address?.municipality;
         if (local && alvo.tipo !== "district" && semAcento(local) !== nomeCidade) continue;
-        if (filtro?.manter && !filtro.manter(l.name, l.extratags ?? {})) continue;
-        const e = normalizar(l, cidade, categoria);
+        // a primeira categoria cujo filtro de nome aceita o lugar fica com ele
+        const dono = passo.categorias.find((c) => !c.manter || c.manter(l.name, l.extratags ?? {}));
+        if (!dono) continue;
+        const e = normalizar(l, cidade, dono.categoria);
         const chave = chaveEmpresa(e);
         if (vistos.has(chave)) continue;
         vistos.add(chave);
@@ -242,4 +246,51 @@ export async function buscarOsm(
   }
 
   return { empresas, proximaPagina: null, fonte: "osm" };
+}
+
+// ---------- Plano de consultas ----------
+
+type CategoriaAlvo = { categoria: string; manter?: FiltroNicho["manter"] };
+type Passo = { q: string; maxPaginas: number; categorias: CategoriaAlvo[] };
+type Plano = { passos: Passo[]; excluirCompartilhado: boolean };
+
+// Um nicho: as consultas dele, todas com a mesma categoria.
+function planoNicho(nichoId: string, termo: string, categoria: string): Plano {
+  const filtro = FILTROS[nichoId];
+  // "Outro": busca pelo texto, que o Nominatim casa com o nome
+  const consultas = filtro?.consultas ?? [termo];
+  return {
+    excluirCompartilhado: true,
+    passos: consultas.map((q) => ({
+      q,
+      maxPaginas: filtro?.manter && GENERICAS.has(q) ? MAX_PAGINAS_GENERICA : MAX_PAGINAS,
+      categorias: [{ categoria, manter: filtro?.manter }],
+    })),
+  };
+}
+
+// Nichos que aceitam quase tudo da etiqueta (salão = "não é barbearia") ficam por último,
+// pra não roubar o que é de um nicho mais específico (barbearia, estética).
+const PEGA_TUDO = new Set(["salao"]);
+
+// "Todos": cada etiqueta do mapa uma vez só (sem as buscas por texto), e cada lugar vai pro
+// primeiro nicho daquela etiqueta que aceita o nome dele.
+function planoTodos(): Plano {
+  const porEtiqueta = new Map<string, { id: string; filtro: FiltroNicho }[]>();
+  for (const [id, filtro] of Object.entries(FILTROS)) {
+    for (const q of filtro.consultas) {
+      if (!q.startsWith("[")) continue;
+      porEtiqueta.set(q, [...(porEtiqueta.get(q) ?? []), { id, filtro }]);
+    }
+  }
+  return {
+    excluirCompartilhado: false,
+    passos: [...porEtiqueta].map(([q, nichos]) => ({
+      q,
+      maxPaginas: MAX_PAGINAS_TODOS,
+      categorias: [...nichos]
+        .sort((a, b) => Number(PEGA_TUDO.has(a.id)) - Number(PEGA_TUDO.has(b.id)))
+        .map(({ id, filtro }) => ({ categoria: nichoPorId(id)?.label ?? id, manter: filtro.manter })),
+    })),
+  };
 }
