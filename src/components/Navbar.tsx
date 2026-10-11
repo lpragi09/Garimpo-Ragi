@@ -78,10 +78,12 @@ export function Navbar() {
         </nav>
       </header>
 
-      {/* Celular: dock flutuante fixo embaixo, no lugar do menu de meia tela */}
+      {/* Celular: dock flutuante fixo embaixo, no lugar do menu de meia tela.
+          Sem o "vidro" (translúcido demais): aqui o conteúdo da página passa por baixo,
+          então o fundo precisa ser opaco — sem blur, que é caro na tela pequena e nem entra. */}
       <nav
         aria-label="Navegação principal"
-        className="fixed inset-x-4 bottom-4 z-50 flex items-stretch justify-around rounded-2xl pb-[env(safe-area-inset-bottom)] vidro md:hidden"
+        className="fixed inset-x-4 bottom-4 z-50 flex items-stretch justify-around rounded-2xl border border-line bg-panel/95 pb-[env(safe-area-inset-bottom)] shadow-[inset_0_1px_0_rgb(255_255_255/0.06)] md:hidden"
       >
         {LINKS.map((l) => {
           const Icon = l.icon;

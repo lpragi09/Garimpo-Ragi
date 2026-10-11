@@ -23,6 +23,18 @@ const COR_STATUS: Record<Status, string> = {
 
 type CamposLead = Partial<Pick<Lead, "status" | "observacao" | "proximo_contato">>;
 
+// Erro do PostgREST (inglês) vira mensagem em pt-BR; a coluna que falta é um caso conhecido
+// (falta rodar a migração) e merece uma dica específica em vez do texto bruto do banco.
+function mensagemErroSalvar(e: unknown): string {
+  if (e instanceof Error) {
+    if (e.message.includes("proximo_contato") && e.message.includes("column")) {
+      return "Não salvou a data: falta rodar a migração 002_proximo_contato.sql no Supabase.";
+    }
+    return `Não salvou: ${e.message}`;
+  }
+  return "Não salvou.";
+}
+
 function nomeArquivoCsv(agora: Date) {
   const ano = agora.getFullYear();
   const mes = String(agora.getMonth() + 1).padStart(2, "0");
@@ -59,7 +71,7 @@ export function Leads() {
       await atualizarLead(id, campos);
     } catch (e) {
       if (original) setLeads((l) => l?.map((x) => (x.id === id ? original : x)) ?? null);
-      setErro(e instanceof Error ? e.message : "Não salvou.");
+      setErro(mensagemErroSalvar(e));
     }
   }
 
@@ -242,6 +254,8 @@ function LeadItem({
   const [obs, setObs] = useState(l.observacao ?? "");
   const [confirmar, setConfirmar] = useState(false);
   const salvoRef = useRef(l.observacao ?? "");
+  const [dataRetorno, setDataRetorno] = useState(l.proximo_contato ?? "");
+  const dataSalvaRef = useRef(l.proximo_contato ?? "");
   const celular = l.telefone ? ehCelular(l.telefone) : false;
   const situacao = situacaoRetorno(l.proximo_contato, agora);
 
@@ -251,6 +265,13 @@ function LeadItem({
     setObs(l.observacao ?? "");
     salvoRef.current = l.observacao ?? "";
   }, [l.observacao]);
+
+  // "Retornar em" mudou de fora (ex.: desfeito após erro): acompanha
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sincroniza estado local com a prop quando ela muda de fora
+    setDataRetorno(l.proximo_contato ?? "");
+    dataSalvaRef.current = l.proximo_contato ?? "";
+  }, [l.proximo_contato]);
 
   // salva 800 ms depois de parar de digitar, sem repetir o mesmo texto
   useEffect(() => {
@@ -275,6 +296,24 @@ function LeadItem({
     if (obs === salvoRef.current) return;
     salvoRef.current = obs;
     onMudar({ observacao: obs || null });
+  }
+
+  // vazia (limpar) ou "AAAA-MM-DD" completa com ano ≥ 2000 — digitar o ano pelo teclado passa
+  // por "0002…", "0020…" etc. antes de chegar no valor final, e nada disso deve ser considerado válido.
+  function dataRetornoValida(v: string): boolean {
+    if (v === "") return true;
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+    if (!m) return false;
+    const ano = Number(m[1]);
+    if (ano < 2000) return false;
+    const d = new Date(`${v}T00:00:00`);
+    return !Number.isNaN(d.getTime()) && d.getFullYear() === ano;
+  }
+
+  function commitDataRetorno(v: string) {
+    if (!dataRetornoValida(v) || v === dataSalvaRef.current) return;
+    dataSalvaRef.current = v;
+    onMudar({ proximo_contato: v || null });
   }
 
   return (
@@ -326,8 +365,19 @@ function LeadItem({
           Retornar em
           <input
             type="date"
-            value={l.proximo_contato ?? ""}
-            onChange={(e) => onMudar({ proximo_contato: e.target.value || null })}
+            value={dataRetorno}
+            onChange={(e) => {
+              const v = e.target.value;
+              setDataRetorno(v);
+              // picker (não teclado dígito a dígito) entrega direto um valor completo e válido
+              if (v === "" || dataRetornoValida(v)) commitDataRetorno(v);
+            }}
+            onBlur={(e) => commitDataRetorno(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.currentTarget.blur();
+              }
+            }}
             className="min-h-11 rounded-xl border border-line bg-ink px-3 py-1.5 text-sm text-cream outline-none [color-scheme:dark] focus:border-lime/60"
           />
         </label>

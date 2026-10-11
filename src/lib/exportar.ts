@@ -37,11 +37,14 @@ function timestampParaBr(iso: string) {
 }
 
 // Escapa um campo pro formato CSV (separador ";"): entre aspas se tiver ';', '"' ou quebra de linha.
+// Começa com '=', '+', '-' ou '@': Excel/Sheets podem interpretar como fórmula — trava com um
+// apóstrofo na frente (truque padrão contra "CSV injection").
 function campoCsv(valor: string) {
-  if (/[";\n\r]/.test(valor)) {
-    return `"${valor.replaceAll('"', '""')}"`;
+  const protegido = /^[=+\-@]/.test(valor) ? `'${valor}` : valor;
+  if (/[";\n\r]/.test(protegido)) {
+    return `"${protegido.replaceAll('"', '""')}"`;
   }
-  return valor;
+  return protegido;
 }
 
 function linhaLead(l: Lead): string {

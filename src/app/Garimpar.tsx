@@ -70,6 +70,9 @@ export function Garimpar() {
   // quem já virou lead sai da lista (dá pra desligar pra ver todo mundo)
   const [esconderSalvos, setEsconderSalvos] = useState(true);
   const [salvos, setSalvos] = useState<Set<string>>(new Set());
+  // instantâneo de quem já estava salvo quando a busca atual começou: salvar um card durante
+  // os resultados não tira ele da tela (senão o toque vira sem querer no vizinho de baixo).
+  const [salvosNaBusca, setSalvosNaBusca] = useState<Set<string>>(new Set());
   const [modelo, setModelo] = useState(MENSAGEM_PADRAO);
   const [editandoMsg, setEditandoMsg] = useState(false);
 
@@ -85,12 +88,26 @@ export function Garimpar() {
     });
     // banco fora do ar: segue sem marcar os salvos em vez de quebrar a página
     idsSalvos()
-      .then((ids) => vivo && setSalvos(ids))
+      .then((ids) => {
+        if (!vivo) return;
+        setSalvos(ids);
+        setSalvosNaBusca(ids);
+      })
       .catch(() => {});
     return () => {
       vivo = false;
     };
   }, []);
+
+  // nova busca: trava o instantâneo de salvos pra essa rodada de resultados
+  // ("carregar mais" reusa o mesmo objeto de busca, então não reseta o instantâneo).
+  useEffect(() => {
+    if (busca) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- trava o instantâneo quando a busca (identidade) muda
+      setSalvosNaBusca(salvos);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busca]);
 
   const termo = nichoId === "outro" ? outro.trim() : (nichoPorId(nichoId)?.termo ?? "");
   const nichoLabel = nichoId === "outro" ? outro.trim() : (nichoPorId(nichoId)?.label ?? "");
@@ -127,7 +144,7 @@ export function Garimpar() {
   );
 
   const visiveis = useMemo(() => {
-    const base = esconderSalvos ? semSalvos(empresas, salvos) : empresas;
+    const base = esconderSalvos ? semSalvos(empresas, salvosNaBusca) : empresas;
     const lista = base.filter(
       (e) =>
         (filtro === "todos" ? true : filtro === "oportunidades" ? e.presenca !== "tem_site" : e.presenca === filtro) &&
@@ -139,7 +156,7 @@ export function Garimpar() {
       .map((e) => [pesoContato(e), e] as const)
       .sort(([pa, a], [pb, b]) => pb - pa || b.avaliacoes - a.avaliacoes || a.nome.localeCompare(b.nome, "pt-BR"))
       .map(([, e]) => e);
-  }, [empresas, filtro, ordem, soTelefone, esconderSalvos, salvos]);
+  }, [empresas, filtro, ordem, soTelefone, esconderSalvos, salvosNaBusca]);
 
   const garimpando = carregando === "busca";
 
@@ -368,7 +385,7 @@ export function Garimpar() {
                   {empresas.length === 0 && fonte === "osm"
                     ? "O OpenStreetMap não tem esse nicho cadastrado nessa cidade. Tente outro nicho ou uma cidade maior por perto."
                     : "Nenhum resultado com esse filtro."}
-                  {empresas.length > 0 && esconderSalvos && salvos.size > 0 && " Os já salvos estão escondidos."}
+                  {empresas.length > 0 && esconderSalvos && salvosNaBusca.size > 0 && " Os já salvos estão escondidos."}
                   {proxima && " Tente carregar mais resultados."}
                 </p>
               )

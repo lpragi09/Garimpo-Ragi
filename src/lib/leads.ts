@@ -34,6 +34,7 @@ export async function listarLeads(): Promise<Lead[]> {
       .from("leads")
       .select("*")
       .order("created_at", { ascending: false })
+      .order("id")
       .range(i, i + PAGINA - 1);
     if (error) throw new Error(error.message);
     leads.push(...((data ?? []) as Lead[]));
@@ -47,7 +48,7 @@ export async function idsSalvos(): Promise<Set<string>> {
   if (!sb) return new Set(lerLocal().map((l) => l.place_id));
   const ids = new Set<string>();
   for (let i = 0; ; i += PAGINA) {
-    const { data, error } = await sb.from("leads").select("place_id").range(i, i + PAGINA - 1);
+    const { data, error } = await sb.from("leads").select("place_id").order("id").range(i, i + PAGINA - 1);
     if (error) throw new Error(error.message);
     (data ?? []).forEach((l: { place_id: string }) => ids.add(l.place_id));
     if (!data || data.length < PAGINA) break;

@@ -67,4 +67,18 @@ describe("leadsParaCsv", () => {
     // índice 6 = "Retornar em"
     expect(colunas[6]).toBe("");
   });
+
+  it("protege campo que começa com '=', '+', '-' ou '@' contra fórmula no Excel/Sheets", () => {
+    const csv = leadsParaCsv([lead({ nome: "=cmd|'/c calc'!A1", observacao: "+5 (a caminho)" })]);
+    const semBom = csv.replace(/^﻿/, "");
+    expect(semBom).toContain("'=cmd|'/c calc'!A1");
+    expect(semBom).toContain("'+5 (a caminho)");
+  });
+
+  it("não protege telefone formatado, que nunca começa com esses caracteres", () => {
+    const csv = leadsParaCsv([lead({ telefone: "35998765432" })]);
+    const semBom = csv.replace(/^﻿/, "");
+    expect(semBom).toContain("(35) 99876-5432");
+    expect(semBom).not.toContain("'(35) 99876-5432");
+  });
 });
