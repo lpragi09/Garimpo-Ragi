@@ -20,6 +20,7 @@ import { EmpresaCard } from "@/components/EmpresaCard";
 import { Marquee } from "@/components/Marquee";
 import { Chip, ehQuente } from "@/components/ui";
 import { useBusca } from "./useBusca";
+import { mostrarVazio } from "./estadoBusca";
 
 type Filtro = "oportunidades" | "sem_site" | "rede_social" | "todos";
 type Ordem = "contato" | "nome" | "avaliacoes" | "nota";
@@ -300,7 +301,7 @@ export function Garimpar() {
             )}
 
             {visiveis.length === 0 ? (
-              !parcial && (
+              mostrarVazio({ parcial, erro }) && (
                 <p className="mt-10 rounded-3xl border border-dashed border-line p-10 text-center text-muted">
                   {empresas.length === 0 && fonte === "osm"
                     ? "O OpenStreetMap não tem esse nicho cadastrado nessa cidade. Tente outro nicho ou uma cidade maior por perto."

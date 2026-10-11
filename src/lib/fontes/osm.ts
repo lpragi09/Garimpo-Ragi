@@ -2,6 +2,7 @@ import type { BuscaResposta, Empresa } from "../types";
 import { classificarSite, linkGoogleMaps } from "./site";
 import { FonteErro } from "./erro";
 import { criarRitmo } from "./ritmo";
+import { combinarSinais } from "../http";
 
 // OpenStreetMap: grátis, sem chave e sem cartão.
 // 1. Photon (komoot) acha a cidade e o retângulo dela.
@@ -76,9 +77,8 @@ export type OpcoesBusca = {
 
 async function pegarJson<T>(url: string, sinal?: AbortSignal): Promise<T> {
   let res: Response;
-  const tempo = AbortSignal.timeout(20_000);
   try {
-    res = await fetch(url, { headers: CABECALHOS, signal: sinal ? AbortSignal.any([sinal, tempo]) : tempo });
+    res = await fetch(url, { headers: CABECALHOS, signal: combinarSinais(sinal, AbortSignal.timeout(20_000)) });
   } catch (e) {
     // TypeError = rede/CORS bloqueado; deixa quem chamou tentar pelo servidor
     throw e instanceof TypeError ? new SemAcesso() : e;

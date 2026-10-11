@@ -1,12 +1,13 @@
 "use client";
 
-import { startTransition, useRef, useState } from "react";
+import { startTransition, useEffect, useRef, useState } from "react";
 import { SemAcesso, buscarOsm } from "@/lib/fontes/osm";
 import { chaveCache, gravarCache, lerCache } from "@/lib/cacheBusca";
-import { lerRespostaJson } from "@/lib/http";
+import { combinarSinais, lerRespostaJson } from "@/lib/http";
 import type { BuscaResposta, Empresa, Fonte } from "@/lib/types";
+import { estadoAposFalha, type AlvoBusca, type Resultado } from "./estadoBusca";
 
-export type AlvoBusca = { nichoId: string; termo: string; cidade: string; nicho: string };
+export type { AlvoBusca };
 
 const CIDADE_KEY = "garimpo:cidade";
 
@@ -18,7 +19,7 @@ async function buscarNoServidor(alvo: AlvoBusca, sinal: AbortSignal, pagina?: st
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ nicho: alvo.nichoId, termo: alvo.termo, categoria: alvo.nicho, cidade: alvo.cidade, pagina }),
-    signal: AbortSignal.any([sinal, AbortSignal.timeout(90_000)]),
+    signal: combinarSinais(sinal, AbortSignal.timeout(90_000)),
   });
   return lerRespostaJson<BuscaResposta>(res);
 }
@@ -44,6 +45,25 @@ export function useBusca() {
   const idAtual = useRef(0);
   const controle = useRef<AbortController | null>(null);
   const chaveEmAndamento = useRef<string | null>(null);
+  // o que estava na tela antes: se a busca nova falhar sem trazer nada, volta pra cá
+  const ultimoConcluido = useRef<Resultado | null>(null);
+
+  // saiu da página no meio da busca: para de gastar consultas do mapa
+  useEffect(() => {
+    return () => controle.current?.abort();
+  }, []);
+
+  function aplicar(r: Resultado) {
+    setBusca(r.busca);
+    setEmpresas(r.empresas);
+    setFonte(r.fonte);
+    setProxima(r.proxima);
+  }
+
+  function concluir(r: Resultado) {
+    ultimoConcluido.current = r;
+    aplicar(r);
+  }
 
   // começa uma operação nova, cancelando a anterior; devolve o sinal e "ainda é a vigente?"
   function novaOperacao() {
@@ -76,14 +96,15 @@ export function useBusca() {
       localStorage.setItem(CIDADE_KEY, alvo.cidade);
     } catch {}
 
+    let parciais: Empresa[] = [];
     try {
       // o Google pagina pelo servidor (token de próxima página): não entra no cache
       const guardado = USA_GOOGLE ? null : lerCache(chave, Date.now());
       if (guardado) {
-        setFonte("osm");
-        setEmpresas(guardado);
+        concluir({ busca: alvo, empresas: guardado, fonte: "osm", proxima: null });
         return;
       }
+
 
       const r = USA_GOOGLE
         ? await buscarNoServidor(alvo, sinal)
@@ -93,7 +114,9 @@ export function useBusca() {
               if (vigente()) setProgresso(m);
             },
             onParcial: (lista) => {
-              if (vigente()) startTransition(() => setEmpresas(lista));
+              if (!vigente()) return;
+              parciais = lista;
+              startTransition(() => setEmpresas(lista));
             },
           }).catch((e) => {
             // navegador bloqueado pelo mapa (limite/extensão/rede): tenta a mesma busca pelo servidor
@@ -103,13 +126,13 @@ export function useBusca() {
           });
 
       if (!vigente()) return;
-      setFonte(r.fonte);
-      setProxima(r.proximaPagina);
-      setEmpresas(r.empresas);
+      concluir({ busca: alvo, empresas: r.empresas, fonte: r.fonte, proxima: r.proximaPagina });
       if (r.fonte === "osm" && !sinal.aborted) gravarCache(chave, r.empresas, Date.now());
     } catch (e) {
       // busca substituída por outra: o AbortError dela não é erro pro usuário
       if (!vigente() || sinal.aborted) return;
+      // nada chegou: volta ao que estava na tela (sem "0 encontrados" contradizendo o erro)
+      aplicar(estadoAposFalha(ultimoConcluido.current, alvo, parciais));
       setErro(mensagemDeErro(e));
     } finally {
       if (vigente()) {
@@ -129,12 +152,10 @@ export function useBusca() {
     try {
       const r = await buscarNoServidor(busca, sinal, proxima);
       if (!vigente()) return;
-      setFonte(r.fonte);
-      setProxima(r.proximaPagina);
-      setEmpresas((atual) => {
-        const vistos = new Set(atual.map((e) => e.placeId));
-        return [...atual, ...r.empresas.filter((e) => !vistos.has(e.placeId))];
-      });
+      // enquanto "mais" carrega nada mais mexe na lista (busca nova a tornaria não vigente)
+      const vistos = new Set(empresas.map((e) => e.placeId));
+      const juntas = [...empresas, ...r.empresas.filter((e) => !vistos.has(e.placeId))];
+      concluir({ busca, empresas: juntas, fonte: r.fonte, proxima: r.proximaPagina });
     } catch (e) {
       if (!vigente() || sinal.aborted) return;
       setErro(mensagemDeErro(e));
