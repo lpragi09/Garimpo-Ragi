@@ -15,11 +15,11 @@ import {
 import { NICHOS, nichoPorId } from "@/lib/nichos";
 import { MENSAGEM_PADRAO, ehCelular, lerModelo, montarMensagem, salvarModelo } from "@/lib/contato";
 import { idsSalvos, salvarLead } from "@/lib/leads";
-import { SemAcesso, buscarOsm } from "@/lib/fontes/osm";
-import type { BuscaResposta, Empresa, Fonte } from "@/lib/types";
+import type { Empresa } from "@/lib/types";
 import { EmpresaCard } from "@/components/EmpresaCard";
 import { Marquee } from "@/components/Marquee";
 import { Chip, ehQuente } from "@/components/ui";
+import { useBusca } from "./useBusca";
 
 type Filtro = "oportunidades" | "sem_site" | "rede_social" | "todos";
 type Ordem = "contato" | "nome" | "avaliacoes" | "nota";
@@ -36,34 +36,20 @@ const FILTROS: { id: Filtro; label: string }[] = [
 
 const CIDADE_KEY = "garimpo:cidade";
 
-// Google só se for ligado de propósito; o padrão é o OpenStreetMap, consultado daqui do navegador.
-const USA_GOOGLE = process.env.NEXT_PUBLIC_FONTE_DADOS === "google";
-
-async function buscarNoServidor(corpo: object): Promise<BuscaResposta> {
-  const res = await fetch("/api/buscar", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(corpo),
-    signal: AbortSignal.timeout(90_000),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.erro ?? "Erro ao buscar.");
-  return data;
-}
-
 export function Garimpar() {
   const [nichoId, setNichoId] = useState("barbearia");
   const [outro, setOutro] = useState("");
   const [cidade, setCidade] = useState("");
-  const [busca, setBusca] = useState<{ nichoId: string; termo: string; cidade: string; nicho: string } | null>(null);
-  const [empresas, setEmpresas] = useState<Empresa[]>([]);
-  const [proxima, setProxima] = useState<string | null>(null);
-  const [fonte, setFonte] = useState<Fonte>("osm");
-  const [carregando, setCarregando] = useState(false);
-  const [progresso, setProgresso] = useState("");
-  const [erro, setErro] = useState<string | null>(null);
+  const { busca, empresas, fonte, proxima, carregando, parcial, progresso, erro, setErro, buscar, carregarMais } =
+    useBusca();
   const [filtro, setFiltro] = useState<Filtro>("oportunidades");
   const [ordem, setOrdem] = useState<Ordem>("contato");
+  // "avaliações"/"nota" só existem no Google: trocou pra outra fonte, volta pro padrão
+  const [fonteAnterior, setFonteAnterior] = useState(fonte);
+  if (fonte !== fonteAnterior) {
+    setFonteAnterior(fonte);
+    if (fonte !== "google") setOrdem("contato");
+  }
   const [soTelefone, setSoTelefone] = useState(false);
   const [salvos, setSalvos] = useState<Set<string>>(new Set());
   const [modelo, setModelo] = useState(MENSAGEM_PADRAO);
@@ -89,49 +75,6 @@ export function Garimpar() {
 
   const termo = nichoId === "outro" ? outro.trim() : (nichoPorId(nichoId)?.termo ?? "");
   const nichoLabel = nichoId === "outro" ? outro.trim() : (nichoPorId(nichoId)?.label ?? "");
-
-  async function chamar(pagina?: string) {
-    const alvo = pagina && busca ? busca : { nichoId, termo, cidade: cidade.trim(), nicho: nichoLabel };
-    if (!alvo.termo || !alvo.cidade) {
-      setErro("Escolha um nicho e informe a cidade.");
-      return;
-    }
-    setCarregando(true);
-    setErro(null);
-    setProgresso("");
-    try {
-      const r = USA_GOOGLE
-        ? await buscarNoServidor({
-            nicho: alvo.nichoId,
-            termo: alvo.termo,
-            categoria: alvo.nicho,
-            cidade: alvo.cidade,
-            pagina,
-          })
-        : await buscarOsm(alvo.nichoId, alvo.termo, alvo.cidade, alvo.nicho, setProgresso).catch((e) => {
-            // navegador bloqueado pelo mapa (limite/extensão/rede): tenta a mesma busca pelo servidor
-            if (!(e instanceof SemAcesso)) throw e;
-            setProgresso("Tentando pelo servidor…");
-            return buscarNoServidor({ nicho: alvo.nichoId, termo: alvo.termo, categoria: alvo.nicho, cidade: alvo.cidade });
-          });
-      setBusca(alvo);
-      setFonte(r.fonte);
-      setProxima(r.proximaPagina);
-      setEmpresas((atual) => {
-        if (!pagina) return r.empresas;
-        const vistos = new Set(atual.map((e) => e.placeId));
-        return [...atual, ...r.empresas.filter((e) => !vistos.has(e.placeId))];
-      });
-      try {
-        localStorage.setItem(CIDADE_KEY, alvo.cidade);
-      } catch {}
-    } catch (e) {
-      const tempo = e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError");
-      setErro(tempo ? "A busca demorou demais. Tente de novo em 1 minuto." : e instanceof Error ? e.message : "Erro ao buscar.");
-    } finally {
-      setCarregando(false);
-    }
-  }
 
   async function salvar(e: Empresa) {
     if (!busca) return;
@@ -195,7 +138,7 @@ export function Garimpar() {
         <form
           onSubmit={(ev) => {
             ev.preventDefault();
-            chamar();
+            buscar({ nichoId, termo, cidade: cidade.trim(), nicho: nichoLabel });
           }}
           className="mx-auto mt-10 max-w-4xl rounded-3xl border border-line bg-panel/80 p-2 backdrop-blur-xl"
         >
@@ -240,16 +183,16 @@ export function Garimpar() {
             </label>
             <button
               type="submit"
-              disabled={carregando}
+              disabled={carregando === "mais"}
               className="flex h-14 items-center justify-center gap-2 rounded-2xl bg-lime px-8 font-bold text-ink transition-transform active:scale-[0.98] disabled:opacity-70"
             >
-              {carregando && !proxima ? <Loader2 className="size-5 animate-spin" /> : <Search className="size-5" />}
+              {carregando === "busca" ? <Loader2 className="size-5 animate-spin" /> : <Search className="size-5" />}
               Garimpar
             </button>
           </div>
         </form>
 
-        {carregando && !proxima && (
+        {carregando === "busca" && (
           <p role="status" className="mx-auto mt-4 flex max-w-4xl items-center justify-center gap-2 text-sm text-muted">
             <Loader2 className="size-4 animate-spin text-lime" />
             {progresso || "Buscando…"}
@@ -348,13 +291,23 @@ export function Garimpar() {
               />
             )}
 
-            {visiveis.length === 0 ? (
-              <p className="mt-10 rounded-3xl border border-dashed border-line p-10 text-center text-muted">
-                {empresas.length === 0 && fonte === "osm"
-                  ? "O OpenStreetMap não tem esse nicho cadastrado nessa cidade. Tente outro nicho ou uma cidade maior por perto."
-                  : "Nenhum resultado com esse filtro."}
-                {proxima && " Tente carregar mais resultados."}
+            {/* resultados chegam ao vivo: a linha de progresso fica acima da grade até terminar */}
+            {parcial && (
+              <p className="mt-6 flex items-center gap-2 text-sm text-muted">
+                <Loader2 className="size-4 animate-spin text-lime" />
+                {progresso || "Buscando…"}
               </p>
+            )}
+
+            {visiveis.length === 0 ? (
+              !parcial && (
+                <p className="mt-10 rounded-3xl border border-dashed border-line p-10 text-center text-muted">
+                  {empresas.length === 0 && fonte === "osm"
+                    ? "O OpenStreetMap não tem esse nicho cadastrado nessa cidade. Tente outro nicho ou uma cidade maior por perto."
+                    : "Nenhum resultado com esse filtro."}
+                  {proxima && " Tente carregar mais resultados."}
+                </p>
+              )
             ) : (
               <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {visiveis.map((e, i) => (
@@ -375,11 +328,11 @@ export function Garimpar() {
               <div className="mt-10 text-center">
                 <button
                   type="button"
-                  onClick={() => chamar(proxima)}
-                  disabled={carregando}
+                  onClick={() => carregarMais()}
+                  disabled={carregando !== null}
                   className="inline-flex items-center gap-2 rounded-full border border-cream px-6 py-3 text-sm font-semibold transition-colors hover:bg-cream hover:text-ink disabled:opacity-60"
                 >
-                  {carregando && <Loader2 className="size-4 animate-spin" />}
+                  {carregando === "mais" && <Loader2 className="size-4 animate-spin" />}
                   Carregar mais 20
                 </button>
                 <p className="mt-2 text-xs text-muted">O Google entrega no máximo 60 por busca.</p>
