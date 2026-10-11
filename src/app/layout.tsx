@@ -27,7 +27,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="pt-BR"
       className={`${inter.variable} ${grotesk.variable} ${playfair.variable} h-full antialiased`}
     >
-      <body className="grao flex min-h-full flex-col font-sans">
+      <body className="grao flex min-h-full flex-col pb-28 font-sans md:pb-0">
         <Navbar />
         {children}
         <Analytics />

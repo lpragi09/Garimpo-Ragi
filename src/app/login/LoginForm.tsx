@@ -4,6 +4,9 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Loader2, Lock, Mail, Pickaxe } from "lucide-react";
 import { getSupabase } from "@/lib/supabase/client";
+import { BotaoLuz } from "@/components/fx/BotaoLuz";
+
+const MSG_SEM_ACESSO = "Essa conta não tem acesso ao Garimpo.";
 
 // Sem cadastro aqui: o único usuário é criado no painel do Supabase
 // (Authentication > Users > Add user) e o "Allow new users to sign up" fica desligado.
@@ -12,12 +15,25 @@ export function LoginForm({ destino, semAcesso }: { destino: string; semAcesso: 
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [verSenha, setVerSenha] = useState(false);
-  const [erro, setErro] = useState<string | null>(
-    semAcesso ? "Essa conta não tem acesso ao Garimpo." : null,
-  );
+  const [erro, setErro] = useState<string | null>(semAcesso ? MSG_SEM_ACESSO : null);
   const [carregando, setCarregando] = useState(false);
 
-  // Conta logada mas fora da lista de permitidos: derruba a sessão.
+  // Ajusta o estado durante a própria renderização (sem passar por um efeito,
+  // que não pode chamar setState direto): se `semAcesso` mudar — o
+  // router.replace volta pra mesma rota, só troca o ?erro=acesso, então o
+  // React reaproveita esta instância em vez de remontar — zera "carregando"
+  // e mostra o erro de acesso.
+  const [semAcessoAnterior, setSemAcessoAnterior] = useState(semAcesso);
+  if (semAcesso !== semAcessoAnterior) {
+    setSemAcessoAnterior(semAcesso);
+    if (semAcesso) {
+      setErro(MSG_SEM_ACESSO);
+      setCarregando(false);
+    }
+  }
+
+  // Conta logada mas fora da lista de permitidos: derruba a sessão (efeito de
+  // verdade, só com o lado externo — nada de setState aqui).
   useEffect(() => {
     if (semAcesso) getSupabase()?.auth.signOut();
   }, [semAcesso]);
@@ -49,7 +65,7 @@ export function LoginForm({ destino, semAcesso }: { destino: string; semAcesso: 
   }
 
   return (
-    <form onSubmit={entrar} className="flex flex-col justify-center p-6 sm:p-10">
+    <form onSubmit={entrar} className="vidro flex flex-col justify-center rounded-3xl p-6 sm:p-10">
       <span className="grid size-10 place-items-center rounded-xl bg-lime text-ink md:hidden">
         <Pickaxe className="size-5" strokeWidth={2.5} />
       </span>
@@ -104,14 +120,10 @@ export function LoginForm({ destino, semAcesso }: { destino: string; semAcesso: 
         </p>
       )}
 
-      <button
-        type="submit"
-        disabled={carregando}
-        className="mt-6 flex h-12 items-center justify-center gap-2 rounded-xl bg-lime font-bold text-ink transition-transform active:scale-[0.98] disabled:opacity-70"
-      >
+      <BotaoLuz type="submit" disabled={carregando} className="mt-6 w-full">
         {carregando && <Loader2 className="size-4 animate-spin" />}
         Entrar
-      </button>
+      </BotaoLuz>
     </form>
   );
 }
