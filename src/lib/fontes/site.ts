@@ -32,3 +32,8 @@ export function classificarSite(site: string | null | undefined): Presenca {
 export function linkGoogleMaps(nome: string, cidade: string) {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${nome} ${cidade}`)}`;
 }
+
+// Link pra buscar no Google o Instagram do negócio (quando ele não aparece na fonte de dados).
+export function linkBuscaInstagram(nome: string, cidade: string) {
+  return "https://www.google.com/search?q=" + encodeURIComponent(`site:instagram.com "${nome}" ${cidade}`);
+}
