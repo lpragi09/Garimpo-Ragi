@@ -34,7 +34,7 @@ export function ehQuente(e: { presenca: Presenca; avaliacoes: number; nota: numb
   return e.presenca !== "tem_site" && e.avaliacoes >= 30 && (e.nota ?? 0) >= 4.2;
 }
 
-// Chip em pílula, igual aos filtros da galeria do GSAP.
+// Chip em pílula de vidro; ativo vira creme sólido. Altura mínima de 44 px (toque).
 export function Chip({
   ativo,
   onClick,
@@ -49,10 +49,10 @@ export function Chip({
       type="button"
       onClick={onClick}
       aria-pressed={ativo}
-      className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-4 py-2 text-sm transition-colors ${
+      className={`inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full px-4 py-2 text-sm transition-colors ${
         ativo
-          ? "border-cream bg-cream font-semibold text-ink"
-          : "border-white/15 text-cream/80 hover:border-cream/60 hover:text-cream"
+          ? "border border-cream bg-cream font-semibold text-ink shadow-[0_0_24px_-6px_rgb(255_252_225/0.5)]"
+          : "vidro text-cream/80 hover:border-white/25 hover:text-cream"
       }`}
     >
       {children}
