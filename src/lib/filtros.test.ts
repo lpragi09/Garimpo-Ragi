@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pesoContato, semSalvos } from "./filtros";
+import { paginar, pesoContato, semSalvos } from "./filtros";
 import type { Empresa } from "./types";
 
 // Empresa completa, só com o que o teste quiser trocar.
@@ -41,5 +41,23 @@ describe("pesoContato", () => {
 
   it("sem telefone vale 0", () => {
     expect(pesoContato(emp("a", { telefone: null }))).toBe(0);
+  });
+});
+
+describe("paginar", () => {
+  const lista = Array.from({ length: 30 }, (_, i) => i);
+
+  it("devolve a fatia da página e o total de páginas", () => {
+    expect(paginar(lista, 1, 12)).toEqual({ itens: lista.slice(0, 12), pagina: 1, totalPaginas: 3 });
+    expect(paginar(lista, 3, 12)).toEqual({ itens: lista.slice(24, 30), pagina: 3, totalPaginas: 3 });
+  });
+
+  it("página fora do intervalo cai na última (ou na primeira)", () => {
+    expect(paginar(lista, 9, 12).pagina).toBe(3);
+    expect(paginar(lista, 0, 12).pagina).toBe(1);
+  });
+
+  it("lista vazia tem 1 página, sem itens", () => {
+    expect(paginar([], 1, 12)).toEqual({ itens: [], pagina: 1, totalPaginas: 1 });
   });
 });

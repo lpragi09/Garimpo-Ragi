@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownWideNarrow,
+  ChevronLeft,
+  ChevronRight,
   BookmarkCheck,
   Info,
   LayoutGrid,
@@ -20,7 +22,7 @@ import {
 } from "lucide-react";
 import { NICHOS, TODOS, nichoPorId } from "@/lib/nichos";
 import { MENSAGEM_PADRAO, lerModelo, montarMensagem, salvarModelo } from "@/lib/contato";
-import { pesoContato, semSalvos } from "@/lib/filtros";
+import { paginar, pesoContato, semSalvos } from "@/lib/filtros";
 import { idsSalvos, salvarLead } from "@/lib/leads";
 import type { Empresa } from "@/lib/types";
 import { EmpresaCard } from "@/components/EmpresaCard";
@@ -52,6 +54,8 @@ const ORDENAR: Record<Exclude<Ordem, "contato">, (a: Empresa, b: Empresa) => num
 };
 
 const CIDADE_KEY = "garimpo:cidade";
+// 4 linhas de 3 no desktop
+const POR_PAGINA = 12;
 
 export function Garimpar() {
   const [nichoId, setNichoId] = useState("barbearia");
@@ -178,6 +182,17 @@ export function Garimpar() {
     for (const e of empresas) if (e.categoria) n.set(e.categoria, (n.get(e.categoria) ?? 0) + 1);
     return [...n].sort((a, b) => b[1] - a[1]);
   }, [buscaTodos, empresas]);
+
+  // Paginação: qualquer mudança de busca, filtro ou ordem volta pra página 1.
+  const chaveLista = `${filtro}|${ordem}|${soTelefone}|${esconderSalvos}|${nichoFiltro}`;
+  const [pag, setPag] = useState({ busca, chaveLista, pagina: 1 });
+  const paginaPedida = pag.busca === busca && pag.chaveLista === chaveLista ? pag.pagina : 1;
+  const pagina = paginar(visiveis, paginaPedida, POR_PAGINA);
+  const topoResultados = useRef<HTMLDivElement>(null);
+  const irPara = (n: number) => {
+    setPag({ busca, chaveLista, pagina: n });
+    topoResultados.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   const garimpando = carregando === "busca";
 
@@ -432,8 +447,11 @@ export function Garimpar() {
                 </p>
               )
             ) : (
-              <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {visiveis.map((e, i) => (
+              <div
+                ref={topoResultados}
+                className="mt-6 grid scroll-mt-28 gap-3 sm:grid-cols-2 lg:scroll-mt-56 lg:grid-cols-3"
+              >
+                {pagina.itens.map((e, i) => (
                   <EmpresaCard
                     key={e.placeId}
                     empresa={e}
@@ -446,6 +464,10 @@ export function Garimpar() {
                   />
                 ))}
               </div>
+            )}
+
+            {pagina.totalPaginas > 1 && (
+              <Paginacao atual={pagina.pagina} total={pagina.totalPaginas} quantidade={visiveis.length} irPara={irPara} />
             )}
 
             {proxima && (
@@ -466,6 +488,35 @@ export function Garimpar() {
         )}
       </section>
     </main>
+  );
+}
+
+function Paginacao({
+  atual,
+  total,
+  quantidade,
+  irPara,
+}: {
+  atual: number;
+  total: number;
+  quantidade: number;
+  irPara: (n: number) => void;
+}) {
+  const botao =
+    "inline-flex min-h-11 items-center gap-1.5 rounded-full border border-line px-4 text-sm text-cream/80 transition-colors hover:border-white/20 hover:text-cream disabled:pointer-events-none disabled:opacity-35";
+  return (
+    <nav aria-label="Páginas dos resultados" className="mt-8 flex items-center justify-center gap-2 sm:gap-3">
+      <button type="button" className={botao} onClick={() => irPara(atual - 1)} disabled={atual <= 1}>
+        <ChevronLeft className="size-4" /> <span className="hidden sm:inline">Anterior</span>
+      </button>
+      <p className="min-w-0 px-1 text-center text-sm text-muted" aria-live="polite">
+        Página <b className="font-semibold text-cream">{atual}</b> de {total}
+        <span className="hidden sm:inline"> · {quantidade} resultados</span>
+      </p>
+      <button type="button" className={botao} onClick={() => irPara(atual + 1)} disabled={atual >= total}>
+        <span className="hidden sm:inline">Próxima</span> <ChevronRight className="size-4" />
+      </button>
+    </nav>
   );
 }
 
