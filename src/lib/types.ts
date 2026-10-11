@@ -49,6 +49,7 @@ export type Lead = {
   maps_url: string | null;
   status: Status;
   observacao: string | null;
+  proximo_contato: string | null;
   created_at: string;
   updated_at: string;
 };
