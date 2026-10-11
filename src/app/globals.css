@@ -26,6 +26,19 @@
 
   --animate-marquee: marquee 28s linear infinite;
   --animate-rise: rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  /* aurora do hero acendendo na entrada (uma vez só) */
+  --animate-acender: acender 0.6s ease-out both;
+  /* luz correndo na linha de progresso da busca */
+  --animate-varrer: varrer 1.4s ease-in-out infinite;
+
+  @keyframes acender {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes varrer {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(300%); }
+  }
 
   @keyframes marquee {
     from { transform: translateX(0); }
