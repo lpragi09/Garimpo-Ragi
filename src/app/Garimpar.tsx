@@ -23,6 +23,7 @@ import {
 import { NICHOS, TODOS, nichoPorId } from "@/lib/nichos";
 import { MENSAGEM_PADRAO, lerModelo, montarMensagem, salvarModelo } from "@/lib/contato";
 import { paginar, pesoContato, semSalvos } from "@/lib/filtros";
+import { lerSessao, salvarSessao, type FiltroResultado, type Ordem } from "@/lib/sessaoBusca";
 import { idsSalvos, salvarLead } from "@/lib/leads";
 import type { Empresa } from "@/lib/types";
 import { EmpresaCard } from "@/components/EmpresaCard";
@@ -37,8 +38,7 @@ import { TextoDecrypt } from "@/components/fx/TextoDecrypt";
 import { useBusca } from "./useBusca";
 import { mostrarVazio } from "./estadoBusca";
 
-type Filtro = "oportunidades" | "sem_site" | "rede_social" | "todos";
-type Ordem = "contato" | "nome" | "avaliacoes" | "nota";
+type Filtro = FiltroResultado;
 
 const FILTROS: { id: Filtro; label: string }[] = [
   { id: "oportunidades", label: "Oportunidades" },
@@ -56,6 +56,10 @@ const ORDENAR: Record<Exclude<Ordem, "contato">, (a: Empresa, b: Empresa) => num
 const CIDADE_KEY = "garimpo:cidade";
 // 4 linhas de 3 no desktop
 const POR_PAGINA = 12;
+
+// identifica "a mesma lista" pra paginação: mudou qualquer um, volta pra página 1
+const chaveDaLista = (f: Filtro, o: Ordem, tel: boolean, esconder: boolean, nicho: string) =>
+  `${f}|${o}|${tel}|${esconder}|${nicho}`;
 
 export function Garimpar() {
   const [nichoId, setNichoId] = useState("barbearia");
@@ -80,6 +84,14 @@ export function Garimpar() {
   const [salvosNaBusca, setSalvosNaBusca] = useState<Set<string>>(new Set());
   // no "Todos": mostrar só um nicho dos resultados ("" = todos)
   const [nichoFiltro, setNichoFiltro] = useState("");
+  // a busca que veio do F5 (pra não zerar os filtros dela quando chegar)
+  const restaurada = useRef<object | null>(null);
+  // página atual, presa à busca e à lista (filtros/ordem) em que foi escolhida
+  const [pag, setPag] = useState<{ busca: object | null; chaveLista: string; pagina: number }>({
+    busca: null,
+    chaveLista: "",
+    pagina: 1,
+  });
   const [modelo, setModelo] = useState(MENSAGEM_PADRAO);
   const [editandoMsg, setEditandoMsg] = useState(false);
 
@@ -92,6 +104,24 @@ export function Garimpar() {
         setCidade(localStorage.getItem(CIDADE_KEY) ?? "");
       } catch {}
       setModelo(lerModelo());
+      // F5: volta a busca da aba (resultados do cache na hora; se ela não tinha terminado, refaz)
+      const s = lerSessao();
+      if (!s) return;
+      restaurada.current = s.alvo;
+      setNichoId(s.alvo.nichoId);
+      if (s.alvo.nichoId === "outro") setOutro(s.alvo.termo);
+      setCidade(s.alvo.cidade);
+      setFiltro(s.filtro);
+      setOrdem(s.ordem);
+      setSoTelefone(s.soTelefone);
+      setEsconderSalvos(s.esconderSalvos);
+      setNichoFiltro(s.nichoFiltro);
+      setPag({
+        busca: s.alvo,
+        chaveLista: chaveDaLista(s.filtro, s.ordem, s.soTelefone, s.esconderSalvos, s.nichoFiltro),
+        pagina: s.pagina,
+      });
+      buscar(s.alvo);
     });
     // banco fora do ar: segue sem marcar os salvos em vez de quebrar a página
     idsSalvos()
@@ -104,6 +134,8 @@ export function Garimpar() {
     return () => {
       vivo = false;
     };
+    // só na montagem: buscar muda a cada render, mas aqui interessa a primeira
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // nova busca: trava o instantâneo de salvos pra essa rodada de resultados
@@ -112,7 +144,8 @@ export function Garimpar() {
     if (busca) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- trava o instantâneo quando a busca (identidade) muda
       setSalvosNaBusca(salvos);
-      setNichoFiltro("");
+      // a busca restaurada do F5 mantém o filtro de nicho que estava escolhido
+      if (busca !== restaurada.current) setNichoFiltro("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busca]);
@@ -184,8 +217,7 @@ export function Garimpar() {
   }, [buscaTodos, empresas]);
 
   // Paginação: qualquer mudança de busca, filtro ou ordem volta pra página 1.
-  const chaveLista = `${filtro}|${ordem}|${soTelefone}|${esconderSalvos}|${nichoFiltro}`;
-  const [pag, setPag] = useState({ busca, chaveLista, pagina: 1 });
+  const chaveLista = chaveDaLista(filtro, ordem, soTelefone, esconderSalvos, nichoFiltro);
   const paginaPedida = pag.busca === busca && pag.chaveLista === chaveLista ? pag.pagina : 1;
   const pagina = paginar(visiveis, paginaPedida, POR_PAGINA);
   const topoResultados = useRef<HTMLDivElement>(null);
@@ -193,6 +225,12 @@ export function Garimpar() {
     setPag({ busca, chaveLista, pagina: n });
     topoResultados.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
+
+  // guarda a busca, os filtros e a página da aba pra sobreviver ao F5
+  useEffect(() => {
+    if (!busca) return;
+    salvarSessao({ alvo: busca, filtro, ordem, soTelefone, esconderSalvos, nichoFiltro, pagina: pagina.pagina });
+  }, [busca, filtro, ordem, soTelefone, esconderSalvos, nichoFiltro, pagina.pagina]);
 
   const garimpando = carregando === "busca";
 
