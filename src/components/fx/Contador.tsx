@@ -21,11 +21,16 @@ export function Contador({ valor, className = "" }: { valor: number; className?:
       atual.current = valor;
       return;
     }
-    // mesmo com de === valor roda um quadro, pra alinhar o estado
-    // caso o valor tenha mudado enquanto estava em "reduzir movimento"
     const de = atual.current;
-    const inicio = performance.now();
     let quadro = 0;
+    if (de === valor) {
+      // nada pra animar; só alinha o estado (o valor pode ter mudado
+      // enquanto estava em "reduzir movimento") num único quadro
+      quadro = requestAnimationFrame(() => setExibido(valor));
+      return () => cancelAnimationFrame(quadro);
+    }
+
+    const inicio = performance.now();
     const passo = (agora: number) => {
       const p = Math.min(1, (agora - inicio) / DURACAO_MS);
       const suave = 1 - Math.pow(1 - p, 3); // desacelera no fim

@@ -96,44 +96,73 @@ void main() {
  * Aurora em WebGL (ogl). Só deve ser montada quando `podeAnimarPesado`
  * libera — quem decide é o `AuroraFundo`. Ocupa 100% do pai.
  */
-export default function Aurora({ className = "" }: { className?: string }) {
+export default function Aurora({
+  className = "",
+  onFalha,
+}: {
+  className?: string;
+  /** Chamado se o WebGL não iniciar ou o contexto for perdido. */
+  onFalha?: () => void;
+}) {
   const caixa = useRef<HTMLDivElement>(null);
+  // guarda o callback mais recente sem reiniciar o WebGL a cada render
+  const falhaRef = useRef(onFalha);
+  useEffect(() => {
+    falhaRef.current = onFalha;
+  }, [onFalha]);
 
   useEffect(() => {
     const el = caixa.current;
     if (!el) return;
 
-    const renderer = new Renderer({
-      dpr: Math.min(window.devicePixelRatio || 1, 1.5),
-      alpha: true,
-      premultipliedAlpha: true,
-      antialias: false,
-      depth: false,
-    });
-    const gl = renderer.gl;
-    gl.clearColor(0, 0, 0, 0);
+    let renderer: Renderer | undefined;
+    let programa: Program;
+    let malha: Mesh;
+    try {
+      // pode lançar (GPU desligada, modo privado...) ou vir sem contexto
+      renderer = new Renderer({
+        dpr: Math.min(window.devicePixelRatio || 1, 1.5),
+        alpha: true,
+        premultipliedAlpha: true,
+        antialias: false,
+        depth: false,
+      });
+      if (!renderer.gl) throw new Error("WebGL indisponível");
+      renderer.gl.clearColor(0, 0, 0, 0);
+      programa = new Program(renderer.gl, {
+        vertex: VERTICE,
+        fragment: FRAGMENTO,
+        uniforms: {
+          uTempo: { value: 0 },
+          uCor1: { value: new Color(CORES[0]) },
+          uCor2: { value: new Color(CORES[1]) },
+          uCor3: { value: new Color(CORES[2]) },
+        },
+      });
+      malha = new Mesh(renderer.gl, { geometry: new Triangle(renderer.gl), program: programa });
+    } catch {
+      // libera o contexto, se chegou a ser criado
+      renderer?.gl?.getExtension("WEBGL_lose_context")?.loseContext();
+      falhaRef.current?.();
+      return;
+    }
+
+    const r = renderer;
+    const gl = r.gl;
     const canvas = gl.canvas as HTMLCanvasElement;
     canvas.style.display = "block";
     canvas.style.width = "100%";
     canvas.style.height = "100%";
     el.appendChild(canvas);
 
-    const programa = new Program(gl, {
-      vertex: VERTICE,
-      fragment: FRAGMENTO,
-      uniforms: {
-        uTempo: { value: 0 },
-        uCor1: { value: new Color(CORES[0]) },
-        uCor2: { value: new Color(CORES[1]) },
-        uCor3: { value: new Color(CORES[2]) },
-      },
-    });
-    const malha = new Mesh(gl, { geometry: new Triangle(gl), program: programa });
+    // contexto perdido: nunca mais desenha; o pai volta pro gradiente CSS
+    let perdido = false;
 
     const redimensionar = () => {
-      renderer.setSize(el.clientWidth || 1, el.clientHeight || 1);
+      if (perdido) return;
+      r.setSize(el.clientWidth || 1, el.clientHeight || 1);
       // desenha um quadro mesmo parado, pra não ficar em branco após resize
-      renderer.render({ scene: malha });
+      r.render({ scene: malha });
     };
     const ro = new ResizeObserver(redimensionar);
     ro.observe(el);
@@ -145,16 +174,17 @@ export default function Aurora({ className = "" }: { className?: string }) {
     let ultimo = performance.now();
 
     const desenhar = (agora: number) => {
+      if (perdido) return;
       // conta só o tempo em que estava rodando, sem "pulo" ao voltar
       tempoAcumulado += Math.min(agora - ultimo, 100);
       ultimo = agora;
       programa.uniforms.uTempo.value = (tempoAcumulado / 1000) * VELOCIDADE;
-      renderer.render({ scene: malha });
+      r.render({ scene: malha });
       quadro = requestAnimationFrame(desenhar);
     };
 
     const atualizar = () => {
-      const rodar = visivel && !document.hidden;
+      const rodar = !perdido && visivel && !document.hidden;
       if (rodar && !quadro) {
         ultimo = performance.now();
         quadro = requestAnimationFrame(desenhar);
@@ -170,6 +200,16 @@ export default function Aurora({ className = "" }: { className?: string }) {
     });
     io.observe(el);
     document.addEventListener("visibilitychange", atualizar);
+
+    const aoPerderContexto = (e: Event) => {
+      e.preventDefault();
+      perdido = true;
+      cancelAnimationFrame(quadro);
+      quadro = 0;
+      falhaRef.current?.();
+    };
+    canvas.addEventListener("webglcontextlost", aoPerderContexto);
+
     atualizar();
 
     return () => {
@@ -178,9 +218,12 @@ export default function Aurora({ className = "" }: { className?: string }) {
       io.disconnect();
       ro.disconnect();
       document.removeEventListener("visibilitychange", atualizar);
-      programa.remove();
+      canvas.removeEventListener("webglcontextlost", aoPerderContexto);
+      if (!perdido) {
+        programa.remove();
+        gl.getExtension("WEBGL_lose_context")?.loseContext();
+      }
       canvas.remove();
-      gl.getExtension("WEBGL_lose_context")?.loseContext();
     };
   }, []);
 

@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useSyncExternalStore } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 import { CONSULTA_REDUZ_MOVIMENTO, podeAnimarPesado } from "./movimento";
 
 // Fallback estático: o mesmo clima da aurora, só que em CSS puro.
@@ -53,10 +53,13 @@ const lerNoServidor = () => false;
  */
 export function AuroraFundo({ className = "absolute inset-0 -z-10" }: { className?: string }) {
   const animar = useSyncExternalStore(assinar, lerNoNavegador, lerNoServidor);
+  // WebGL falhou ao iniciar ou perdeu o contexto: fica no gradiente de vez
+  const [falhou, setFalhou] = useState(false);
+  const aoFalhar = useCallback(() => setFalhou(true), []);
 
   return (
     <div aria-hidden className={`pointer-events-none overflow-hidden ${className}`}>
-      {animar ? <Aurora /> : <GradienteEstatico />}
+      {animar && !falhou ? <Aurora onFalha={aoFalhar} /> : <GradienteEstatico />}
     </div>
   );
 }
