@@ -42,7 +42,7 @@ mas precisa de faturamento ativo no Google Cloud:
 
 ## Supabase
 
-1. Rodar `supabase/migrations/001_leads.sql` no SQL Editor
+1. Rodar `supabase/migrations/001_leads.sql` e `supabase/migrations/002_proximo_contato.sql` no SQL Editor
 2. Authentication → Sign In / Providers → desligar "Allow new users to sign up"
 3. Authentication → Users → Add user (seu e-mail e senha)
 4. Preencher `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` e `EMAILS_PERMITIDOS`
